@@ -1,0 +1,10 @@
+property,graph_fixed,graph_harmed,missed_by_both,mwu_p
+weighted_degree,153.07,177.529,163.242,0.2233
+degree_rank_in_subject,0.539,0.717,0.581,0.2132
+frac_abnormal_neighbours_weighted,0.134,0.13,0.138,0.9726
+n_abnormal_neighbours,2.364,2.75,2.312,0.5318
+strongest_edge_to_abnormal,9.894,11.825,10.69,0.2519
+sim_score,0.352,0.304,0.487,0.6561
+is_ipsilateral,0.5,1.0,0.771,0.0744
+A_missing,0.061,0.0,0.08,0.1685
+B_available,0.682,0.5,0.771,0.518

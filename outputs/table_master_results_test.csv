@@ -1,0 +1,21 @@
+Model,AUPRC,AUROC,TopkDice,SeedSD
+Non-graph logreg (A+B),0.526,0.902,0.511,
+Non-graph HGB (A+B),0.491,0.894,0.496,
+Non-graph logreg (A_only),0.485,0.883,0.474,
+Non-graph logreg (B_only),0.385,0.835,0.419,
+Non-graph logreg (A_plus_B),0.526,0.902,0.511,
+Graph real (10-seed ens),0.582,0.915,0.619,0.566 +/- 0.010
+Graph shuffled (10-seed ens),0.498,0.894,0.482,0.472 +/- 0.017
+Graph identity (10-seed ens),0.482,0.887,0.478,0.461 +/- 0.015
+Graph weights (10-seed ens),0.571,0.919,0.541,0.543 +/- 0.012
+Graph A_only,0.515,0.896,0.499,
+Graph B_only,0.431,0.864,0.377,
+Graph A_plus_B,0.581,0.913,0.611,
+LEARNED MODEL (S2_moddropout_r0.3),0.584,0.918,0.585,
+Simulation alone,0.405,0.773,0.456,
+Naive average (raw),0.714,0.94,0.67,
+Naive average (rank),0.594,0.915,0.507,
+FA convex weight,0.602,0.921,0.53,
+FB confidence-aware,0.647,0.936,0.582,
+FC OOF stacker,0.723,0.955,0.654,
+--- prevalence baseline (AUPRC floor) ---,0.072,0.5,,

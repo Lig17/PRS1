@@ -1,0 +1,81 @@
+{
+  "seed": 42,
+  "features": {
+    "use_A": true,
+    "use_B": true,
+    "use_node_prior": false,
+    "use_ipsi": true,
+    "use_graph_stats": true,
+    "use_within_z": true,
+    "use_missing_ind": true
+  },
+  "feature_names": [
+    "A_ct_z",
+    "A_gmv_z",
+    "A_sa_z",
+    "A_curv_z",
+    "A_t1t2_z",
+    "A_lgi_z",
+    "Awz_ct_z",
+    "Awz_gmv_z",
+    "Awz_sa_z",
+    "Awz_curv_z",
+    "Awz_t1t2_z",
+    "Awz_lgi_z",
+    "Amiss_ct_z",
+    "Amiss_gmv_z",
+    "Amiss_sa_z",
+    "Amiss_curv_z",
+    "Amiss_t1t2_z",
+    "Amiss_lgi_z",
+    "Amiss_frac",
+    "B_rel_delta",
+    "B_rel_theta",
+    "B_rel_alpha",
+    "B_rel_beta",
+    "B_rel_gamma",
+    "B_spike_rate",
+    "B_hfo_rate",
+    "Bwz_rel_delta",
+    "Bwz_rel_theta",
+    "Bwz_rel_alpha",
+    "Bwz_rel_beta",
+    "Bwz_rel_gamma",
+    "Bwz_spike_rate",
+    "Bwz_hfo_rate",
+    "B_available",
+    "is_ipsilateral",
+    "g_wdeg",
+    "g_bdeg",
+    "g_meanw",
+    "g_eigcent"
+  ],
+  "node_prior_excluded_because": "hurt validation AUPRC despite chi2 p~1e-9 on train",
+  "graph_hp": {
+    "hidden": 64,
+    "n_layers": 2,
+    "dropout": 0.3,
+    "lr": 0.003,
+    "weight_decay": 0.0001,
+    "pos_weight": 1.0,
+    "residual": true
+  },
+  "adjacency": "D^-1/2 (A + c*I) D^-1/2, c = subject mean non-zero edge weight",
+  "n_seeds_ensemble": 10,
+  "missing_B_strategy": "S2_moddropout_r0.3",
+  "fusion": "FC_oof_stacker",
+  "fusion_params": {
+    "convex_w": 0.55,
+    "conf_ramp": [
+      0.4,
+      0.8
+    ],
+    "stacker_C": 1.0
+  },
+  "primary_nongraph_baseline": "hgb",
+  "metrics": [
+    "auprc (primary)",
+    "auroc",
+    "topk_dice"
+  ]
+}

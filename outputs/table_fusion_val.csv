@@ -1,0 +1,8 @@
+fusion,auprc,auroc,topk_dice
+FC_oof_stacker,0.7189,0.9366,0.6811
+naive_avg_raw,0.6887,0.9121,0.6787
+FB_confidence_aware,0.6695,0.9222,0.6207
+FA_convex_weight,0.5794,0.8961,0.5477
+naive_avg_rank,0.571,0.8915,0.5185
+model_alone,0.5551,0.902,0.5401
+simulation_alone,0.4371,0.7722,0.5548

@@ -1,0 +1,7 @@
+,auprc,auprc,auroc,auroc,topk_dice,topk_dice
+,mean,std,mean,std,mean,std
+mode,,,,,,
+identity,0.4584,0.018,0.8361,0.0034,0.4402,0.0246
+real,0.5413,0.009,0.8908,0.0036,0.5038,0.0168
+shuffled,0.4674,0.0121,0.8398,0.0063,0.449,0.0255
+weights,0.531,0.0091,0.8884,0.0055,0.4908,0.0184

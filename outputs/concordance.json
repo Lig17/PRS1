@@ -1,0 +1,11 @@
+{
+  "pooled_spearman": 0.354219309851604,
+  "pooled_pearson": 0.3763397731550466,
+  "per_subject_spearman_mean": 0.4173264529680138,
+  "per_subject_spearman_median": 0.5007487113144412,
+  "per_subject_spearman_sd": 0.2469473523799293,
+  "per_subject_spearman_min": -0.25812711913196884,
+  "per_subject_spearman_max": 0.6983475803394632,
+  "topk_jaccard_mean": 0.25281167245452957,
+  "topk_jaccard_median": 0.225
+}

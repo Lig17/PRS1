@@ -1,0 +1,12 @@
+{
+  "node_chi2_p": 8.933525961887721e-10,
+  "node_prior_splithalf_rho": 0.45563298082420955,
+  "frac_ipsilateral": 0.771343537414966,
+  "frac_all_ipsilateral": 0.38095238095238093,
+  "clustering_ratio": 2.88548280804364,
+  "clustering_p": 1.7106552178285207e-15,
+  "homophily_abn": 0.16039991865731676,
+  "homophily_norm": 0.07654114193392447,
+  "conf_vs_simauroc_rho": 0.5375693021789734,
+  "conf_vs_simauroc_p": 1.34428127240169e-07
+}

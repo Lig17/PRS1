@@ -1,0 +1,11 @@
+Property,Value
+Subjects,140 (train 84 / val 28 / test 28)
+Nodes per subject,"68, identical ordering, verified against region_names.csv"
+Total node rows,"9,520"
+Positive prevalence,"0.0727 overall; by split test 0.0720, train 0.0733, val 0.0714"
+Positives per subject,"min 3, max 7, mean 4.943"
+Modality A missing,"5.933% of cells; no row fully missing; NaN-rate by label {0: 5.934, 1: 5.925} (i.e. missingness is uninformative about y)"
+Modality B missing,"35/140 subjects entirely ({'test': 7, 'train': 20, 'val': 8}); 0 scattered NaNs"
+Adjacency,"68x68, symmetry err 0.0, 0 negatives, zero diag, density 0.2704, mean non-zero weight 7.878"
+Adjacency varies by subject,all identical = False; binary topology identical = False; mean off-diag corr to sub-000 = 0.7813
+Simulation,"sim_score in [0.0, 1.0], sim_confidence in [0.1282, 0.99] (constant within subject)"

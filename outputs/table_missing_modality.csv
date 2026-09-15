@@ -1,0 +1,6 @@
+strategy,auprc_all,dice_all,auprc_Bpresent,dice_Bpresent,auprc_Babsent,dice_Babsent
+S2_moddropout_r0.3,0.5551,0.5401,0.587,0.5652,0.4798,0.4771
+S2_moddropout_r0.5,0.5545,0.5349,0.587,0.5581,0.4736,0.4771
+S2_moddropout_r0.15,0.5512,0.5329,0.5825,0.5652,0.4823,0.4521
+S1_median_flag,0.5487,0.5061,0.5784,0.5361,0.4881,0.4313
+S3_dual_path,0.5359,0.5192,0.5645,0.5361,0.4734,0.4771

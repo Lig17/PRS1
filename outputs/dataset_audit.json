@@ -1,0 +1,91 @@
+{
+  "n_subjects": 140,
+  "split_counts": {
+    "train": 84,
+    "test": 28,
+    "val": 28
+  },
+  "n_subjects_with_B": 105,
+  "n_subjects_missing_B": 35,
+  "B_missing_by_split": {
+    "test": 7,
+    "train": 20,
+    "val": 8
+  },
+  "n_left_regions": 34,
+  "left_block_contiguous": true,
+  "adj_max_asymmetry": 0.0,
+  "adj_negative_entries": 0,
+  "adj_max_abs_diagonal": 0.0,
+  "adj_density_mean": 0.2704,
+  "adj_density_range": [
+    0.259,
+    0.2788
+  ],
+  "adj_all_identical": false,
+  "adj_binary_topology_identical": false,
+  "adj_mean_offdiag_corr_to_sub0": 0.7813,
+  "adj_mean_nonzero_weight": 7.878,
+  "prevalence_overall": 0.07269,
+  "prevalence_by_split": {
+    "test": 0.07195,
+    "train": 0.07335,
+    "val": 0.07143
+  },
+  "pos_per_subject": {
+    "min": 3,
+    "max": 7,
+    "mean": 4.943
+  },
+  "pos_per_subject_hist": {
+    "3": 27,
+    "4": 35,
+    "5": 26,
+    "6": 23,
+    "7": 29
+  },
+  "A_pct_cells_nan": 5.933,
+  "A_pct_nan_by_feature": {
+    "ct_z": 5.8,
+    "gmv_z": 5.85,
+    "sa_z": 6.08,
+    "curv_z": 5.61,
+    "t1t2_z": 6.12,
+    "lgi_z": 6.13
+  },
+  "A_nan_by_split": {
+    "test": 6.42,
+    "train": 5.82,
+    "val": 5.79
+  },
+  "A_nan_by_site": {
+    "site-0": 6.11,
+    "site-1": 5.91,
+    "site-2": 6.12,
+    "site-3": 5.72
+  },
+  "A_nan_by_label": {
+    "0": 5.934,
+    "1": 5.925
+  },
+  "A_rows_entirely_nan": 0,
+  "B_nan_cells": 0,
+  "sim_score_range": [
+    0.0,
+    1.0
+  ],
+  "sim_confidence_range": [
+    0.1282,
+    0.99
+  ],
+  "site_counts": {
+    "site-3": 48,
+    "site-0": 34,
+    "site-1": 30,
+    "site-2": 28
+  },
+  "hemisphere_counts": {
+    "R": 82,
+    "L": 58
+  }
+}
