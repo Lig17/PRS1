@@ -2,7 +2,7 @@
 **Position 2 — Simulation-Informed AI & Multimodal Epileptogenic-Zone Localisation**
 
 **Candidate:** Lighittha P R  
-**Email:** ligpersonal@gmail.com
+**Email:** ligpersonalmail@gmail.com
 
 
 ## 1. Data Handling and Setup
