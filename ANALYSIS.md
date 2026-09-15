@@ -1,7 +1,7 @@
 # ANALYSIS.md
 
 **Candidate:** Lighittha P R  
-**Email:** ligpersonal@gmail.com
+**Email:** ligpersonalmail@gmail.com
 
 
 ## Required question
