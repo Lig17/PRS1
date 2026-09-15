@@ -9,9 +9,11 @@ graph hyperparameters chosen on val only,True,"PHASE D grid, val AUPRC"
 missing-modality strategy chosen on val only,True,selected S2_moddropout_r0.3
 fusion chosen on val only,True,selected FC_oof_stacker
 stacker trained on OUT-OF-FOLD train predictions,True,5 subject-level folds inside train; preprocessing refit per fold
+"OOF early stopping uses an INNER split, never the held-out fold",True,inner_tr / inner_es carved from the fold's training subjects
+OOF held-out fold is excluded from fitting and early stopping,True,5 subject-level folds; preprocessing refit per fold; early stopping uses inner_tr/inner_es only
 calibration fitted on train-OOF only,True,
 ensemble size chosen before test,True,
 resected / engel never used as feature or target,True,
-oracle k used only inside the metric,True,topk_dice() is the sole consumer of y.sum()
+"oracle k never used for training, fusion, thresholds or predictions.csv",True,true k is confined to requested top-k evaluation and diagnostic error tables
 predictions.csv will contain no oracle-k thresholding,True,
 final config written to disk before test,True,

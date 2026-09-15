@@ -1,0 +1,4 @@
+condition,n_feat,auprc,auroc,topk_dice,auprc_Bpresent
+A_only (isolated),19,0.4232,0.8336,0.4601,0.4464
+B_only (isolated),15,0.3959,0.8255,0.3626,0.4839
+A_plus_B (isolated),34,0.5196,0.8788,0.4594,0.5582

@@ -1,0 +1,23 @@
+{
+  "prediction_shape": [
+    1904,
+    3
+  ],
+  "prediction_columns": [
+    "subject_id",
+    "node_id",
+    "prob_abnormal"
+  ],
+  "n_test_subjects": 28,
+  "rows_per_subject_all_68": true,
+  "node_ids_0_67_each_subject": true,
+  "duplicate_subject_node_keys": 0,
+  "nan_cells": 0,
+  "prob_min": 4.095911847147146e-09,
+  "prob_max": 0.9881353087432672,
+  "required_paths_present": true,
+  "candidate_name": "Lighittha P R",
+  "candidate_email": "ligpersonal@gmail.com",
+  "primary_docs_accidental_nan_metrics": false,
+  "supporting_csv_blank_cells_note": "Only not-applicable metadata/result fields; predictions contain no NaNs."
+}

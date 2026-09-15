@@ -1,33 +1,9 @@
-# Python
 __pycache__/
 *.py[cod]
-*.pyo
 .ipynb_checkpoints/
-
-# Environments
 .venv/
 venv/
-env/
-
-# OS/editor
+.env
 .DS_Store
-Thumbs.db
 .vscode/
 .idea/
-
-# Temporary files
-*.tmp
-*.log
-*.bak
-~*
-
-# Large/local intermediate artifacts
-*.npy
-*.npz
-*.pkl
-*.joblib
-
-# Do not commit secrets
-.env
-*.pem
-*.key

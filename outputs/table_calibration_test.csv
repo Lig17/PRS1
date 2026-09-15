@@ -1,0 +1,4 @@
+source,brier,ece,mean_pred,prevalence
+learned model,0.0429,0.0144,0.0716,0.072
+simulation,0.0516,0.017,0.0883,0.072
+SUBMITTED (FC OOF stacker),0.0352,0.0106,0.0743,0.072

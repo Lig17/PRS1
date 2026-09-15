@@ -1,0 +1,7 @@
+{
+  "frac_subjects_auroc_1": 0.05952380952380952,
+  "frac_subjects_auroc_below_chance": 0.10714285714285714,
+  "conf_vs_separation_rho": 0.6029796647827833,
+  "conf_vs_pos_level_rho": 0.6151696627073999,
+  "conf_vs_neg_level_rho": 0.37514617367177905
+}

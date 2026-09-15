@@ -1,4 +1,67 @@
-# %% [notebook cell 1]
+
+"""
+IIIT-Delhi take-home assignment — end-to-end CPU pipeline.
+
+The implementation follows the assignment Sections 1-7 in one reproducible script.
+The narrative notebook contains the same computational sequence.
+"""
+
+# ASSIGNMENT SECTION MAP
+# 1. Data Handling and Setup: loading, alignment, metrics, preprocessing
+# 2. Baseline Model (Non-Graph): logistic regression + HistGradientBoosting
+# 3. Graph Model and Ablations: custom message passing, real/shuffled/identity/weight controls
+# 4. Multimodal Fusion and Missing Modalities: A/B/A+B and missing-B strategies
+# 5. Independent Simulation Score: standalone, concordance, discordance, fusion
+# 6. Evaluation and Reporting: AUPRC/AUROC/top-k Dice, final test predictions
+# 7. Robustness: repeated seeds, subject bootstrap, sensitivity/error/uncertainty analyses
+
+
+
+# --- Notebook cell 0: narrative ------------------------------------------------
+# # Position 2 — Simulation-Informed AI & Multimodal Epileptogenic-Zone Localisation
+#
+# **End-to-end solution notebook.** Run top-to-bottom; every number in the final report is
+# computed by a cell above it. Nothing is hard-coded.
+#
+# ### The scientific chain this notebook builds
+#
+# ```
+# DATA AUDIT  →  SIGNAL DISCOVERY  →  STRONG NON-GRAPH BASELINE
+#            →  MESSAGE-PASSING MODEL  →  REAL vs SHUFFLED vs IDENTITY vs WEIGHT-SHUFFLE
+#            →  A vs B vs A+B          →  MISSING-B STRATEGIES, MEASURED
+#            →  SIMULATION STANDALONE  →  CONCORDANCE → DISCORDANCE → JUSTIFIED FUSION
+#            →  SUBJECT-LEVEL BOOTSTRAP CIs  →  ONE-TIME TEST EVAL  →  ERROR ANALYSIS
+# ```
+#
+# ### Test-set policy (enforced mechanically, not by good intentions)
+# `TEST_UNLOCKED` starts `False`. Every function that can touch test asserts on it. It is
+# set `True` exactly once, in the *Freeze* section, after the config is written to disk.
+#
+# ### Five findings that are easy to miss — all verified in this notebook
+# 1. **`subjects.hemisphere` is a legal, unrestricted covariate that tells you which *side* is
+#    abnormal.** ~77% of abnormal nodes sit in the declared hemisphere. Most candidates ignore
+#    this column entirely. It is one of the largest single feature gains in the whole notebook.
+# 2. **The node-identity prior is statistically significant on train but does not transfer.**
+#    χ² over 68 nodes gives p≈1e-9, yet adding a node prevalence prior *hurts* validation AUPRC.
+#    Split-half reliability inside train is only ρ≈0.45. This is a trap: the "significant" feature
+#    is mostly noise with 68 free parameters and 84 subjects.
+# 3. **Purely *local* graph statistics (weighted degree, eigen-centrality) already carry signal**
+#    without any message passing. So "the graph helps" must be decomposed into
+#    *topology-as-node-feature* vs *message passing*. We give the non-graph baseline the degree
+#    features too, so the real-vs-identity contrast isolates propagation alone.
+# 4. **The adjacency is unnormalised with mean non-zero weight ≈7.8.** A textbook `A + I`
+#    self-loop would be numerically invisible. We add `c·I` with `c` = that subject's mean
+#    non-zero edge weight.
+# 5. **`sim_confidence` genuinely predicts simulation reliability** (Spearman ρ≈0.54 on train
+#    against per-subject simulation AUROC). That is *evidence-first* justification for a
+#    confidence-aware fusion — and it is also confounded with modality-B availability, which we
+#    check rather than assume.
+#
+# > No GPU. No deep-learning framework. The propagation layer is ~40 lines of NumPy with a
+# > finite-difference gradient check (passes at ~3e-8), which the brief explicitly permits.
+
+
+# --- Notebook cell 1: code -----------------------------------------------------
 import os, sys, json, time, math, warnings, random, itertools
 from pathlib import Path
 import numpy as np, pandas as pd
@@ -57,7 +120,19 @@ def log_exp(**kw):
     LEDGER.append(kw); return kw
 
 
-# %% [notebook cell 3]
+# --- Notebook cell 2: narrative ------------------------------------------------
+# ---
+# ## PHASE A — Dataset validation and leakage audit
+#
+# Everything downstream assumes `(subject_id, node_id)` alignment. A silent misalignment would
+# invalidate every result while still producing plausible-looking metrics, so these are hard
+# assertions: the notebook must *crash*, not degrade.
+#
+# We never rely on CSV row order — every join is explicit on `(subject_id, node_id)`, and we
+# verify that each table's `region` column agrees with `region_names.csv` node-by-node.
+
+
+# --- Notebook cell 3: code -----------------------------------------------------
 subs = pd.read_csv(f"{DATA_DIR}/subjects.csv")
 A_df = pd.read_csv(f"{DATA_DIR}/modality_A.csv")
 B_df = pd.read_csv(f"{DATA_DIR}/modality_B.csv")
@@ -173,7 +248,7 @@ json.dump(AUD, open(OUT/"dataset_audit.json","w"), indent=2, default=str)
 print("\n*** ALL PHASE-A ASSERTIONS PASSED ***")
 
 
-# %% [notebook cell 4]
+# --- Notebook cell 4: code -----------------------------------------------------
 # Compact dataset summary table for the report
 summary = pd.DataFrame([
  ["Subjects", f"{AUD['n_subjects']} (train {AUD['split_counts']['train']} / "
@@ -201,7 +276,22 @@ summary.to_csv(OUT/"table_dataset_summary.csv", index=False)
 print(summary.to_string(index=False))
 
 
-# %% [notebook cell 6]
+# --- Notebook cell 5: narrative ------------------------------------------------
+# ### Is the adjacency in the same node order as the feature tables?
+#
+# The brief asks us to confirm this and **there is no ground truth to check it against** — the
+# `.npy` files carry no index. Shape, symmetry, non-negativity and a zero diagonal are all
+# invariant to a relabelling of the nodes, so none of the Phase-A assertions test ordering.
+#
+# We therefore do two things rather than let the audit imply a verification we cannot perform:
+# state it as an explicit assumption, and gather the strongest *indirect* evidence available.
+# If the ordering is correct and `region_names.csv` is L-block-then-R-block, connectomes have two
+# signatures: within-hemisphere connectivity exceeds across-hemisphere, and **homotopic** pairs
+# (node `n` and node `n+34`, the same region in the other hemisphere) are unusually strong. Under
+# a random relabelling both signatures disappear. This is evidence, not proof — we say so.
+
+
+# --- Notebook cell 6: code -----------------------------------------------------
 ORD = {}
 wl, wr, ac, homo, hetero = [], [], [], [], []
 L = int(NODE_IS_LEFT.sum())
@@ -252,7 +342,24 @@ print("consistent with it, and a mis-ordering would show up as the null ratio ab
 json.dump(ORD, open(OUT/"adjacency_ordering_evidence.json","w"), indent=2)
 
 
-# %% [notebook cell 8]
+# --- Notebook cell 7: narrative ------------------------------------------------
+# ---
+# ## PHASE A2 — Signal discovery (TRAIN SUBJECTS ONLY)
+#
+# This is the section that separates a good submission from an average one. Findings here
+# *design the feature space*, so running it on val or test would be leakage. Every cell below
+# is restricted to the 84 training subjects.
+#
+# We ask six questions:
+# 1. Is abnormality uniform across `node_id`? (is there a spatial prior?)
+# 2. Does the unrestricted `hemisphere` column tell us *which side* is abnormal?
+# 3. Are abnormal nodes **clustered on the graph**? (the precondition for message passing helping)
+# 4. Is there **homophily** — are abnormal nodes' neighbours more often abnormal?
+# 5. Which individual features separate the classes, and on what scale do they live?
+# 6. Does `sim_confidence` predict simulation reliability?
+
+
+# --- Notebook cell 8: code -----------------------------------------------------
 TR_IDS = subs.subject_id[subs.split=="train"].tolist()
 VA_IDS = subs.subject_id[subs.split=="val"].tolist()
 TE_IDS = subs.subject_id[subs.split=="test"].tolist()
@@ -288,7 +395,7 @@ print("    -> the effect is real but weak. With 68 free parameters and 84 subjec
 print("       per-node prior is mostly noise. We TEST it as a feature rather than assume it.")
 
 
-# %% [notebook cell 9]
+# --- Notebook cell 9: code -----------------------------------------------------
 # ---- Q2: does `hemisphere` localise the abnormality? -----------------------
 hemi = subs.set_index("subject_id").hemisphere
 rows = []
@@ -310,7 +417,7 @@ print("       effective search space. We build an `is_ipsilateral` node feature 
 print("       This is the single most-overlooked column in the dataset.")
 
 
-# %% [notebook cell 10]
+# --- Notebook cell 10: code -----------------------------------------------------
 # ---- Q3: are abnormal nodes clustered on the graph? ------------------------
 # Compare the mean edge weight WITHIN the abnormal set against a size-matched
 # random-node null drawn from the SAME subject's own graph (so degree/scale cancel).
@@ -349,7 +456,7 @@ print("       Note this is a statement about the data, NOT yet evidence that our
 print("       exploits it. That requires the shuffled/identity ablations.")
 
 
-# %% [notebook cell 11]
+# --- Notebook cell 11: code -----------------------------------------------------
 # ---- Q4b: local graph statistics alone -------------------------------------
 print("Q4b Do purely LOCAL graph statistics separate the classes without message passing?")
 for nm, fn in [("weighted degree", lambda M: M.sum(1)),
@@ -365,7 +472,7 @@ print("    -> YES. Therefore 'the graph helps' is AMBIGUOUS. We give the non-gra
 print("       these degree features too, so that real-vs-identity isolates PROPAGATION.")
 
 
-# %% [notebook cell 12]
+# --- Notebook cell 12: code -----------------------------------------------------
 # ---- Q5: univariate separation and feature scale ---------------------------
 def mwu_auc(g1, g0):
     return stats.mannwhitneyu(g1, g0).statistic/(len(g1)*len(g0))
@@ -389,7 +496,7 @@ print("    mean ~6 and a long right tail, unlike the z-scored channels. We log1p
 print("    linear model sees a comparable scale and the tail does not dominate the L2 penalty.")
 
 
-# %% [notebook cell 13]
+# --- Notebook cell 13: code -----------------------------------------------------
 # ---- Q6: is sim_confidence informative about simulation reliability? -------
 _S = sim_df[sim_df.subject_id.isin(TR_IDS)].merge(
         lab_df[["subject_id","node_id","is_abnormal"]], on=["subject_id","node_id"])
@@ -416,7 +523,21 @@ print("       are entangled. The fusion must not silently take credit for the B 
 json.dump(EDA, open(OUT/"eda_findings.json","w"), indent=2)
 
 
-# %% [notebook cell 15]
+# --- Notebook cell 14: narrative ------------------------------------------------
+# ### Is `sim_score` too good to be true? (train only)
+#
+# Before we build a fusion on top of it we should ask what `sim_score` actually is. Per-subject
+# simulation AUROC reaches 1.000 for some subjects and correlates 0.54 with a value that is
+# *constant within a subject*. On synthetic data that pattern is also what you would see if
+# `sim_score` were generated as a function of the labels plus confidence-scaled noise.
+#
+# We cannot see the simulation pipeline, so we cannot settle this. What we can do is characterise
+# it precisely and state what it would mean for the fusion result — because "fusion gained 14
+# AUPRC points" is much less impressive if the second source is partly a noisy copy of the
+# target.
+
+
+# --- Notebook cell 15: code -----------------------------------------------------
 SIMDIAG = {}
 _tr = sim_df[sim_df.subject_id.isin(TR_IDS)].merge(
         lab_df[["subject_id","node_id","is_abnormal"]], on=["subject_id","node_id"])
@@ -467,7 +588,28 @@ print("    than presenting it as a modelling achievement.")
 json.dump(SIMDIAG, open(OUT/"sim_provenance.json","w"), indent=2)
 
 
-# %% [notebook cell 17]
+# --- Notebook cell 16: narrative ------------------------------------------------
+# ---
+# ## PHASE B — Evaluation framework
+#
+# Implemented once, reused everywhere.
+#
+# **Accuracy is never reported.** At 7.3% prevalence a constant-negative predictor scores 92.7%.
+#
+# **Top-k Dice.** For each subject take the k highest-scored nodes where k is that subject's
+# *true* positive count. Since |Pred| = |True| = k, Dice reduces to `|P∩T|/k`, i.e. precision =
+# recall at k. The oracle k is legal **only inside the metric** — it never influences training,
+# never sets a threshold, never appears in `predictions.csv`.
+#
+# **Subject-level bootstrap.** Nodes within a subject share a graph, a noise level and a
+# simulation confidence; they are not independent. Resampling the ~1,900 test nodes would give
+# CIs that are far too narrow. The independent experimental unit is the **subject**, so every
+# CI resamples 28 subjects with replacement and takes all 68 of their nodes. Bootstrap replicas
+# are relabelled (`sub-012#3`) so that a subject drawn twice contributes twice to the top-k Dice
+# average, which is what the subject-level sampling distribution requires.
+
+
+# --- Notebook cell 17: code -----------------------------------------------------
 def topk_dice(y_true, y_prob, sids, return_per_subject=False):
     d = pd.DataFrame({"s":np.asarray(sids), "y":np.asarray(y_true),
                       "p":np.asarray(y_prob, float)})
@@ -526,7 +668,31 @@ assert abs(topk_dice(_y,_p,_s) - 0.5) < 1e-12   # k=2, top2={.9,.8} -> 1 hit -> 
 print("metric self-test passed")
 
 
-# %% [notebook cell 19]
+# --- Notebook cell 18: narrative ------------------------------------------------
+# ---
+# ## PHASE B2 — Leakage-safe feature construction
+#
+# Two classes of statistic, treated differently and deliberately:
+#
+# | Kind | Example | Rule |
+# |---|---|---|
+# | **Cross-subject** | imputation medians, standardisation mean/sd, node prevalence prior | fitted on **train subjects only**, applied frozen to val/test |
+# | **Within-subject** | within-subject z-scores, weighted degree, eigen-centrality | computed from that subject's own 68 rows only — legal at inference for a single isolated subject, crosses no split boundary |
+#
+# **Modality A NaNs (~6%, verified above to be uninformative about the label):** train-median
+# imputation + a per-feature binary missingness indicator + a row-level missing fraction. The
+# indicators let the model discount an imputed cell instead of trusting a median as if observed.
+#
+# **Modality B absent for whole subjects:** train-median constant fill, within-subject z-block
+# set to 0, plus a `B_available` flag. Three strategies are compared head-to-head later.
+#
+# **Within-subject z-scores.** The task is really "rank the 68 nodes *inside this subject*".
+# A subject-level offset (site effects, scanner, overall severity) is nuisance variance for that
+# ranking. Z-scoring each feature against the subject's own 68 nodes removes it. This is the
+# second-largest feature gain after `is_ipsilateral`.
+
+
+# --- Notebook cell 19: code -----------------------------------------------------
 SIM = {s: g.sort_values("node_id").sim_score.to_numpy() for s,g in sim_df.groupby("subject_id")}
 CONF = sim_df.groupby("subject_id").sim_confidence.first().to_dict()
 AMAT = {s: g.sort_values("node_id")[A_FEATS].to_numpy(float) for s,g in A_df.groupby("subject_id")}
@@ -650,7 +816,31 @@ _f = Features().fit(TR_IDS); _X,_y,_g = _f.matrix(TR_IDS)
 print(f"{_X.shape[1]} features:", _f.names)
 
 
-# %% [notebook cell 21]
+# --- Notebook cell 20: narrative ------------------------------------------------
+# ### Adjacency normalisation and the ablation conditions
+#
+# `A_hat = A + c·I`, then `D^{-1/2} A_hat D^{-1/2}`.
+#
+# **Why `c` and not 1.** The audit measured a mean non-zero edge weight of ~7.8. A textbook unit
+# self-loop would contribute <1% of a typical row sum — the node would be drowned out by its own
+# neighbourhood. We set `c` = that subject's own mean non-zero edge weight, so the self-loop is
+# worth exactly one average neighbour. This is chosen *before* seeing any result and is stated
+# in the report.
+#
+# **Shuffled.** `P A Pᵀ` with a random permutation, while feature rows and labels stay in their
+# original node order. This preserves the weighted degree sequence, density, weight distribution
+# and every global structural statistic, and destroys *only* the correspondence between topology
+# and features. Any gain that survives shuffling is not about *this* graph.
+#
+# **Identity.** `S = I`. Because the layer keeps `W_self` and `W_nbr` separate, `S = I` makes the
+# layer an exact dense MLP layer with identical parameter count, optimiser, budget and early
+# stopping. Real-vs-identity therefore isolates *message passing* and nothing else.
+#
+# **Weight-shuffle (stretch).** Keep the binary topology, permute the non-zero weights. Separates
+# "which edges exist" from "how strongly they are weighted".
+
+
+# --- Notebook cell 21: code -----------------------------------------------------
 def norm_adj(M, mode="real", rng=None, self_loops=True, agg="sym"):
     if mode == "identity":
         return np.eye(N_NODES)
@@ -684,7 +874,24 @@ _S = norm_adj(_M,"real"); print("normalised row-sum range:",
       round(float(_S.sum(1).min()),3), round(float(_S.sum(1).max()),3))
 
 
-# %% [notebook cell 23]
+# --- Notebook cell 22: narrative ------------------------------------------------
+# ---
+# ## PHASE C — Strong non-graph baselines
+#
+# The baseline is the bar the graph model must clear, so under-building it would make the whole
+# graph conclusion worthless. Two families:
+#
+# * **HistGradientBoosting** — non-linear, captures interactions.
+# * **L2 logistic regression** — linear control. If it matches the GBM, the signal is essentially
+#   additive, which is itself a finding worth reporting.
+#
+# Both get the *same* feature matrix, including the graph degree features. Selection is on
+# **validation AUPRC** only.
+#
+# We first run a **feature ablation** to decide preprocessing, then a small hyperparameter scan.
+
+
+# --- Notebook cell 23: code -----------------------------------------------------
 def fit_hgb(X, y, seed=0, **kw):
     p = dict(max_depth=4, max_iter=200, learning_rate=0.03, l2_regularization=1.0,
              min_samples_leaf=40, max_leaf_nodes=15, early_stopping=False,
@@ -730,7 +937,7 @@ featabl.to_csv(OUT/"table_feature_ablation.csv", index=False)
 print(featabl.to_string(index=False))
 
 
-# %% [notebook cell 24]
+# --- Notebook cell 24: code -----------------------------------------------------
 base_full = featabl[featabl.config=="full"].auprc.max()
 np_full   = featabl[featabl.config=="+node_prior"].auprc.max()
 print(f"\nNODE-PRIOR VERDICT: full={base_full:.4f} vs +node_prior={np_full:.4f} "
@@ -745,7 +952,25 @@ for tag in ["-is_ipsilateral","-within_z","-graph_stats","-missing_indicators"]:
     print(f"  removing {tag:22s} -> {d:+.4f} val AUPRC")
 
 
-# %% [notebook cell 26]
+# --- Notebook cell 25: narrative ------------------------------------------------
+# ### Node identity, tested properly — and a "no clinical prior" variant
+#
+# Two gaps a reviewer would find in the version above.
+#
+# **(a) We only tested node identity in its weakest form**, a single shrunk scalar. Two stronger
+# forms deserve a fair test: a full 68-column one-hot (let the model learn its own per-node
+# effect), and an **ipsilateral-conditional** prior — separate prevalence estimates for "this node
+# is on the subject's declared side" versus not. The plain prior is dominated by the hemisphere
+# effect, so conditioning on it is the sharper version of the same hypothesis.
+#
+# **(b) `is_ipsilateral` is arguably a clinical prior, not a covariate.** It passes the letter of
+# the rules — it is in `subjects.csv`, it is not restricted, and it is available at prediction
+# time. But in deployment, knowing the seizure-onset hemisphere is itself an output of the
+# work-up this model is meant to assist. So we also report a **no-clinical-prior** variant and
+# carry that number through, rather than waiting to be asked for it.
+
+
+# --- Notebook cell 26: code -----------------------------------------------------
 rows2=[]
 VARIANTS = {
  "baseline (as frozen)"        : {},
@@ -782,7 +1007,7 @@ print(f"\nNO-CLINICAL-PRIOR variant (drops is_ipsilateral): val AUPRC {NO_CLIN_A
 print("   This is the number to quote if a reviewer rejects hemisphere as a legitimate input.")
 
 
-# %% [notebook cell 27]
+# --- Notebook cell 27: code -----------------------------------------------------
 # --- small, deliberately shallow hyperparameter scan -----------------------
 f = Features(**BASE_FEAT).fit(TR_IDS)
 Xt,yt,gt = f.matrix(TR_IDS); Xv,yv,gv = f.matrix(VA_IDS)
@@ -811,7 +1036,7 @@ for r_ in scan.to_dict("records"):
             val_auprc=r_["auprc"], val_auroc=r_["auroc"], val_dice=r_["topk_dice"])
 
 
-# %% [notebook cell 28]
+# --- Notebook cell 28: code -----------------------------------------------------
 # frozen non-graph baselines (both families), for the master table
 lr_base  = fit_lr(Xt, yt, C=BASE_LR_C)
 hgb_base = fit_hgb(Xt, yt, **BASE_HGB)
@@ -825,7 +1050,34 @@ print("The linear and non-linear families land within noise of each other, which
 print("usable node-level signal is close to additive once within-subject z-scores are in.")
 
 
-# %% [notebook cell 30]
+# --- Notebook cell 29: narrative ------------------------------------------------
+# ---
+# ## PHASE D — The message-passing model (NumPy, hand-written backward pass)
+#
+# One architecture only. The brief explicitly says not to architecture-shop, and the scientific
+# question is about *graph structure*, not about GCN-vs-GAT.
+#
+# ```
+# P  = S H                      propagate over the normalised weighted adjacency
+# Z  = H W_self + P W_nbr + b   self and neighbour paths kept SEPARATE
+# H' = ReLU(Z) (+ H if widths match)  then inverted dropout
+# logit = H_L w_o + b_o
+# ```
+#
+# **Why separate `W_self` and `W_nbr`:** with `S = I` the layer becomes an exact dense MLP layer
+# with the *same* parameter count. The identity ablation is then a perfectly matched control
+# rather than a crippled model.
+#
+# Every subject has exactly 68 nodes, so the whole training set is one `(n_subjects, 68, F)`
+# tensor and propagation is a single `einsum`. Full-batch Adam, a few seconds on CPU.
+#
+# A **finite-difference gradient check** runs below — without it, a hand-written backward pass is
+# not defensible. Note the check uses BCE-*with-logits*; using `-log(p+ε)` on probabilities makes
+# the *numerical* derivative wrong by `O(ε/p)` exactly where units saturate, which looks like a
+# backward-pass bug and isn't.
+
+
+# --- Notebook cell 30: code -----------------------------------------------------
 def sigmoid(z):
     return np.where(z>=0, 1/(1+np.exp(-z)), np.exp(z)/(1+np.exp(z)))
 
@@ -949,7 +1201,7 @@ assert gc_err < 1e-5, "hand-written backward pass is WRONG"
 print("GRADIENT CHECK PASSED -- the backward pass is verified, not assumed.")
 
 
-# %% [notebook cell 31]
+# --- Notebook cell 31: code -----------------------------------------------------
 def make_tensors(f, ids, adj_mode="real", seed=0, self_loops=True, agg="sym"):
     X,Y,G = f.tensor(ids)
     rng = np.random.default_rng(10_000+seed)
@@ -975,7 +1227,15 @@ print(f"smoke test real-adjacency seed 0: {  {k:round(v,4) for k,v in m0.items()
 print(f"({time.time()-t0:.1f}s per run)")
 
 
-# %% [notebook cell 33]
+# --- Notebook cell 32: narrative ------------------------------------------------
+# ### Minimal hyperparameter check
+#
+# Deliberately small: depth, width, dropout, learning rate, class weighting and the residual
+# connection — 3 seeds each, validation AUPRC only. No sweep. With 84 training subjects, a large
+# search would just select validation noise; inductive bias matters more than brute force here.
+
+
+# --- Notebook cell 33: code -----------------------------------------------------
 GRID = [dict(n_layers=1), dict(n_layers=2), dict(n_layers=3),
         dict(hidden=32), dict(dropout=0.1), dict(dropout=0.5),
         dict(lr=1e-3), dict(pos_weight=5.0), dict(residual=False)]
@@ -1007,7 +1267,22 @@ else:
                                  f"of its own seed spread, so any 'winner' is noise.")
 
 
-# %% [notebook cell 35]
+# --- Notebook cell 34: narrative ------------------------------------------------
+# ### Design choices that were argued but never measured
+#
+# Three decisions so far rest on reasoning rather than evidence. Reasoning is not evidence, so we
+# measure them.
+#
+# * **The `c·I` self-loop.** The argument (a unit self-loop is invisible against a mean weight of
+#   ~7.9) is sound but untested. We compare `c·I`, no self-loop at all, and a unit self-loop.
+# * **The aggregator.** The brief explicitly offers a weighted-mean alternative to symmetric
+#   normalisation. We never tried it.
+# * **The loss.** `pos_weight` was swept but focal loss — which the brief names — was not, despite
+#   7% prevalence being exactly its use case. It is now implemented with an exact analytic
+#   gradient (see `GraphNet._dlogit`), not an approximation.
+
+
+# --- Notebook cell 35: code -----------------------------------------------------
 DESIGN = [
  ("self-loop c*I  + sym agg  + BCE   (current)", dict(), True,  "sym"),
  ("NO self-loop   + sym agg  + BCE",             dict(), False, "sym"),
@@ -1049,7 +1324,29 @@ else:
 print(f"FROZEN: self_loops={SELF_LOOPS}, agg='{AGG}', loss={GHP_FINAL.get('loss','bce')}")
 
 
-# %% [notebook cell 37]
+# --- Notebook cell 36: narrative ------------------------------------------------
+# ---
+# ## PHASE E — The required graph ablations
+#
+# **real** vs **shuffled** vs **identity**, 10 seeds each, plus the stretch **weight-shuffle**.
+#
+# Stated *before* looking at the results — our falsification criterion:
+#
+# > We will conclude the graph does **not** genuinely contribute if any of the following hold:
+# > real ≈ identity, or real ≈ shuffled, or the 95% subject-bootstrap CI on
+# > (real − identity) substantially crosses zero, or the sign of the gain flips across seeds,
+# > or the gain is driven by one or two subjects.
+#
+# Both contrasts are needed and they control different things:
+#
+# * **real − identity** — does *any* neighbourhood aggregation help beyond the same architecture
+#   with no propagation? Non-zero here could still be an artefact of extra smoothing/regularisation.
+# * **real − shuffled** — does *this specific* topology help beyond a degree-matched random graph?
+#   This is the one that kills the smoothing explanation, because a shuffled graph smooths just as
+#   much. A gain that survives shuffling is about *which* nodes are connected.
+
+
+# --- Notebook cell 37: code -----------------------------------------------------
 SEEDS = list(range(10))
 MODES = ["real","shuffled","identity","weights"]
 abl_rows, abl_preds = [], {}
@@ -1070,7 +1367,7 @@ abl_sum.to_csv(OUT/"table_ablation_val.csv")
 print(); print(abl_sum.to_string())
 
 
-# %% [notebook cell 38]
+# --- Notebook cell 38: code -----------------------------------------------------
 # Paired seed-wise deltas: same seed = same init and same dropout stream, so the
 # only difference between the paired runs is the adjacency itself.
 piv = abl.pivot(index="seed", columns="mode", values="auprc")
@@ -1087,7 +1384,7 @@ print("\nSign-consistency across seeds is the cheapest and most honest robustnes
 print("a gain that flips sign on some seeds is noise no matter how good its mean looks.")
 
 
-# %% [notebook cell 39]
+# --- Notebook cell 39: code -----------------------------------------------------
 # Ensemble the seeds per condition, then bootstrap over VALIDATION SUBJECTS.
 # (Test CIs come later, once, in the frozen evaluation.)
 Xv_,Sv_,Yv_,Gv_ = make_tensors(f_main, VA_IDS, "real", 0, SELF_LOOPS, AGG)
@@ -1102,7 +1399,7 @@ for a,b in [("real","identity"),("real","shuffled")]:
         print(f"VAL  {a} - {b}  {met:9s}: {fmt_ci(ci)}   P(diff>0)={ci['frac_gt0']:.3f}")
 
 
-# %% [notebook cell 40]
+# --- Notebook cell 40: code -----------------------------------------------------
 fig, ax = plt.subplots(1,2, figsize=(11,4))
 order = ["identity","shuffled","weights","real"]
 data = [abl[abl["mode"]==m].auprc.values for m in order]
@@ -1125,7 +1422,21 @@ plt.tight_layout(); plt.savefig(OUT/"figures/fig1_graph_ablation.png", dpi=140)
 plt.show()
 
 
-# %% [notebook cell 42]
+# --- Notebook cell 41: narrative ------------------------------------------------
+# ### Is the graph gap capacity-specific?
+#
+# The hyperparameter grid above varied capacity for the **real** condition only. That leaves an
+# alternative explanation open: maybe identity or shuffled would close the gap if given a
+# different width or depth, and what we are really measuring is that message passing happens to
+# suit *this* capacity. A reviewer is entitled to ask, and "we varied depth" is not an answer
+# unless the ablation was re-run at each setting.
+#
+# So we re-run the full three-way ablation at two additional capacities. If the ordering
+# real > shuffled ≈ identity survives at every capacity, the conclusion is not an artefact of the
+# one configuration we happened to freeze.
+
+
+# --- Notebook cell 42: code -----------------------------------------------------
 CAPS = {"small (h=16, L=1)" : dict(hidden=16, n_layers=1),
         "frozen (h=64, L=2)" : dict(),
         "large (h=128, L=3)" : dict(hidden=128, n_layers=3)}
@@ -1170,7 +1481,21 @@ else:
 print("\n" + CAPACITY_VERDICT)
 
 
-# %% [notebook cell 44]
+# --- Notebook cell 43: narrative ------------------------------------------------
+# ---
+# ## PHASE F — Modality A vs B vs A+B
+#
+# All three conditions, same model family, same budget, so the only thing changing is the
+# feature block. A-only vs A+B tells us whether B adds anything **given** A; B-only tells us
+# whether B is intrinsically weak or merely **redundant** with A. Those are different findings
+# and only running both distinguishes them.
+#
+# For B-only we report two views, because they answer different questions:
+# * **all subjects** — the deployable number, using our missing-B strategy for the 25% without B;
+# * **B-present subjects only** — the intrinsic quality of the modality, unpolluted by imputation.
+
+
+# --- Notebook cell 44: code -----------------------------------------------------
 # Two families of arm, because "A_only" is ambiguous and a reviewer will read the
 # label literally. The SHARED arms keep is_ipsilateral and the graph statistics, so
 # they measure the INCREMENTAL value of a modality on top of covariates both arms
@@ -1230,7 +1555,26 @@ print("Reading the shared 'A_only' number as 'what modality A alone can do' woul
 print("it includes the hemisphere prior and the topology statistics that both arms share.")
 
 
-# %% [notebook cell 46]
+# --- Notebook cell 45: narrative ------------------------------------------------
+# ---
+# ## PHASE G — Missing modality B: three strategies, measured
+#
+# 35/140 subjects (25%) have **no** modality-B rows at all — and, from the audit, this is spread
+# across all three splits and is entangled with lower `sim_confidence`. Dropping them silently
+# would be the single worst thing we could do.
+#
+# | Strategy | Mechanism | Rationale |
+# |---|---|---|
+# | **S1 median+flag** | train-median constant fill, within-subject z-block zeroed, `B_available` flag | simplest defensible thing; the flag lets the model gate the B block off |
+# | **S2 modality dropout** | during training, randomly blank the B block of B-*present* subjects at rate `r` | forces one set of weights to be competent both with and without B, instead of learning to rely on B and then seeing a constant |
+# | **S3 dual-path** | train an A-only expert and an A+B expert; route each subject by availability | no imputation at all; costs sample efficiency because the A-only expert never sees B-present subjects' B information |
+#
+# The masking rate `r` for S2 is chosen on **validation only**. We report **B-present and
+# B-absent subjects separately**, and explicitly check whether the strategy *harms* B-present
+# subjects — a strategy that helps the 25% by damaging the 75% is a bad trade.
+
+
+# --- Notebook cell 46: code -----------------------------------------------------
 B_BLOCK = [i for i,n in enumerate(f_main.names)
            if n.startswith("B_") or n.startswith("Bwz_")]
 B_AVAIL_IDX = f_main.names.index("B_available")
@@ -1273,7 +1617,7 @@ def run_with_dropout(f, tr_ids, va_ids, rate, seed, hp):
     return net, net.predict(Xv,Sv), Gv, Yv.ravel()
 
 
-# %% [notebook cell 47]
+# --- Notebook cell 47: code -----------------------------------------------------
 mask_B  = np.array([HAS_B[s]==1 for s in Gv_])
 mask_nB = ~mask_B
 print(f"validation: {mask_B.sum()//N_NODES} B-present subjects, "
@@ -1332,7 +1676,16 @@ print("We report this explicitly because a strategy that rescues the 25% by degr
 print("75% is a bad trade even if the pooled number improves.")
 
 
-# %% [notebook cell 49]
+# --- Notebook cell 48: narrative ------------------------------------------------
+# ---
+# ## PHASE H — The independent simulation score
+#
+# Deliberately **not** concatenated into the feature matrix. It is a second, independent opinion,
+# and the value of a second opinion is in *where it disagrees*. The order is fixed by the brief
+# and by common sense: standalone → concordance → discordance → only then fusion.
+
+
+# --- Notebook cell 49: code -----------------------------------------------------
 def sim_frame(ids):
     return pd.concat([pd.DataFrame(dict(subject_id=s, node_id=np.arange(N_NODES),
                        sim_score=SIM[s], sim_confidence=CONF[s], y=Ymat[s]))
@@ -1375,7 +1728,7 @@ print("    Any fusion that averages raw probabilities across subjects inherits t
 print("    which is why we fuse in rank space and report a rank-space naive average too.")
 
 
-# %% [notebook cell 50]
+# --- Notebook cell 50: code -----------------------------------------------------
 cf = pd.DataFrame(dict(subject_id=Gv_, node_id=np.tile(np.arange(N_NODES),len(VA_IDS)),
                        y=yv_flat, p_model=MODEL_VAL))
 cf = cf.merge(sv[["subject_id","node_id","sim_score","sim_confidence"]],
@@ -1407,7 +1760,7 @@ print("    correlation over ~1,900 nodes is inflated by between-subject variatio
 print("    score level, which is not agreement about WHICH nodes are abnormal.")
 
 
-# %% [notebook cell 51]
+# --- Notebook cell 51: code -----------------------------------------------------
 print("H3  DISCORDANCE\n")
 rows=[]
 for s,d in cf.groupby("subject_id"):
@@ -1434,7 +1787,7 @@ print(disc.head(8)[["subject_id","k","disagreement","one_minus_jaccard","spearma
                     "A_missing_frac"]].round(3).to_string(index=False))
 
 
-# %% [notebook cell 52]
+# --- Notebook cell 52: code -----------------------------------------------------
 print("\nH3b  What EXPLAINS disagreement and simulation quality? (all subjects, no cherry-picking)")
 assoc=[]
 for tgt in ["disagreement","sim_dice","dice_gap","model_dice"]:
@@ -1461,7 +1814,7 @@ print("  Disagreement by B_available:",
       disc.groupby("B_available").disagreement.mean().round(3).to_dict())
 
 
-# %% [notebook cell 53]
+# --- Notebook cell 53: code -----------------------------------------------------
 fig, ax = plt.subplots(1,3, figsize=(14,4))
 ax[0].scatter(cf.sim_score, cf.p_model, s=5, alpha=.25,
               c=np.where(cf.y==1,"crimson","steelblue"))
@@ -1478,7 +1831,30 @@ ax[2].set_title(f"Reliability vs confidence\nsim rho={r_cs.statistic:+.3f}"); ax
 plt.tight_layout(); plt.savefig(OUT/"figures/fig2_concordance.png", dpi=140); plt.show()
 
 
-# %% [notebook cell 55]
+# --- Notebook cell 54: narrative ------------------------------------------------
+# ---
+# ## PHASE I — Fusion
+#
+# Four conditions, as required: **model alone**, **simulation alone**, **naive average**, and a
+# **smarter fusion**. The "smarter" design is not chosen for elegance — it must follow from what
+# H2/H3 actually showed.
+#
+# Before any averaging we look at the two score distributions. They are on different scales, so
+# a raw 0.5/0.5 average is dominated by whichever source has the larger spread. We therefore also
+# report a **rank-space** average, which is the honest version of "naive".
+#
+# Three smart candidates, all fitted on train/val only:
+# * **F-A convex weight** `w·p_model + (1−w)·p_sim`, `w` swept on validation.
+# * **F-B confidence-aware** `w(c)` a function of `sim_confidence` — justified *only if* the
+#   H3 association is real.
+# * **F-C out-of-fold stacker** — a heavily regularised logistic regression on
+#   `[model logit, sim logit, sim_confidence, interaction, B_available, disagreement]`.
+#   **Base-model predictions for training subjects are out-of-fold** (subject-level 5-fold inside
+#   train). Training a stacker on in-sample base predictions is the classic way to make a fusion
+#   look brilliant on paper and fail on test.
+
+
+# --- Notebook cell 55: code -----------------------------------------------------
 print("Score distributions before fusion")
 for nm, v in [("model", MODEL_VAL), ("sim", cf.sim_score.to_numpy())]:
     q = np.percentile(v,[0,25,50,75,100])
@@ -1500,7 +1876,7 @@ naive_raw  = 0.5*p_mod_v + 0.5*p_sim_v
 naive_rank = 0.5*rm_v + 0.5*rs_v
 
 
-# %% [notebook cell 56]
+# --- Notebook cell 56: code -----------------------------------------------------
 # --- F-A: convex weight swept on VALIDATION --------------------------------
 ws = np.linspace(0,1,41); aup=[]
 for w in ws:
@@ -1514,7 +1890,7 @@ plt.xlabel("weight on model"); plt.ylabel("val AUPRC"); plt.title("F-A convex sw
 plt.tight_layout(); plt.savefig(OUT/"figures/fig3_fusion_weight.png", dpi=140); plt.show()
 
 
-# %% [notebook cell 57]
+# --- Notebook cell 57: code -----------------------------------------------------
 # --- F-B: confidence-aware weight ------------------------------------------
 # Justified ONLY by the H3 finding that sim_confidence tracks simulation reliability.
 conf_v = cf.sim_confidence.to_numpy()
@@ -1533,7 +1909,7 @@ print(f"F-B  confidence ramp lo={LO} hi={HI}: val AUPRC {cg.iloc[0].val_auprc:.4
 print(cg.head(5).round(4).to_string(index=False))
 
 
-# %% [notebook cell 58]
+# --- Notebook cell 58: code -----------------------------------------------------
 # --- F-C: out-of-fold stacker ----------------------------------------------
 def logit(p, eps=1e-6):
     p = np.clip(p, eps, 1-eps); return np.log(p/(1-p))
@@ -1588,7 +1964,7 @@ print(f"  train-OOF AUPRC {_oof_m['auprc']:.4f}  vs  validation AUPRC {m_mod_val
 OOF_SANE = bool(_oof_m["auprc"] <= m_mod_val["auprc"] + 0.02)
 
 
-# %% [notebook cell 59]
+# --- Notebook cell 59: code -----------------------------------------------------
 def stack_features(p_model, p_sim, conf, bavail, sids):
     rm, rs = to_rank(p_model,sids), to_rank(p_sim,sids)
     d = np.abs(rm-rs)
@@ -1627,7 +2003,7 @@ print("\nRead this honestly: if `B_available` dominates, the 'confidence-aware' 
 print("a modality-availability story, and we should say so rather than dress it up.")
 
 
-# %% [notebook cell 60]
+# --- Notebook cell 60: code -----------------------------------------------------
 fusion_v = {
  "model_alone"          : p_mod_v,
  "simulation_alone"     : p_sim_v,
@@ -1653,7 +2029,20 @@ for cand in ["FA_convex_weight","FB_confidence_aware","FC_oof_stacker"]:
     print(f"  VAL {cand:22s} - model_alone: {fmt_ci(ci)}  P(>0)={ci['frac_gt0']:.3f}")
 
 
-# %% [notebook cell 62]
+# --- Notebook cell 61: narrative ------------------------------------------------
+# ---
+# ## PHASE J — Calibration
+#
+# `predictions.csv` asks for a probability, and AUPRC/AUROC/top-k Dice are all rank metrics and
+# therefore **calibration-insensitive**. So calibration cannot be judged by them, and we must not
+# "optimise calibration for AUPRC" — that is a category error. We judge it with **Brier score**
+# and a reliability curve, and adopt it only if it helps *without* moving the ranking.
+#
+# Note also that the rank-space fusions output a rank in [0,1], not a probability. If a rank
+# fusion wins, a calibration map is **required**, not optional.
+
+
+# --- Notebook cell 62: code -----------------------------------------------------
 def brier(y,p): return float(np.mean((np.asarray(p)-np.asarray(y))**2))
 def ece(y,p,bins=10):
     y=np.asarray(y); p=np.asarray(p); e=0.0
@@ -1683,7 +2072,17 @@ print("If so, a monotone calibration map is REQUIRED for predictions.csv to mean
 print("and being monotone it leaves every rank metric untouched.")
 
 
-# %% [notebook cell 64]
+# --- Notebook cell 63: narrative ------------------------------------------------
+# ---
+# ## PHASE K — Uncertainty (stretch, but cheap and genuinely useful)
+#
+# We already train a seed ensemble. The **standard deviation across seeds** is a free per-node
+# uncertainty estimate. The question worth asking is not "can we produce a number" but
+# **"are uncertain nodes more often wrong?"** If the answer is no, the uncertainty is decorative
+# and we should say so.
+
+
+# --- Notebook cell 64: code -----------------------------------------------------
 unc_ps = [run_graph(f_main, TR_IDS, VA_IDS, "real", sd, GHP_FINAL, self_loops=SELF_LOOPS, agg=AGG)[1] for sd in range(10)]
 UNC_V = np.std(unc_ps,0); MEAN_V = np.mean(unc_ps,0)
 ub = pd.DataFrame(dict(y=yv_flat, p=MEAN_V, u=UNC_V, s=Gv_))
@@ -1714,7 +2113,16 @@ plt.ylabel("top-k error rate"); plt.title("Uncertainty vs error (validation)")
 plt.tight_layout(); plt.savefig(OUT/"figures/fig4_uncertainty.png", dpi=140); plt.show()
 
 
-# %% [notebook cell 66]
+# --- Notebook cell 65: narrative ------------------------------------------------
+# ---
+# ## PHASE L — FREEZE
+#
+# Everything above used **train + validation only**. We now write the frozen specification to
+# disk and run the leakage audit. `TEST_UNLOCKED` flips to `True` only if **every** box passes.
+# After this point nothing may be re-tuned.
+
+
+# --- Notebook cell 66: code -----------------------------------------------------
 FINAL_CONFIG = dict(
     seed=SEED,
     features=BASE_FEAT,
@@ -1734,7 +2142,7 @@ json.dump(FINAL_CONFIG, open("configs/final_config.json","w"), indent=2, default
 print(json.dumps(FINAL_CONFIG, indent=2, default=str)[:1800])
 
 
-# %% [notebook cell 67]
+# --- Notebook cell 67: code -----------------------------------------------------
 checks = []
 def chk(name, ok, detail=""):
     checks.append((name, bool(ok), detail)); return ok
@@ -1779,7 +2187,22 @@ TEST_UNLOCKED = True
 print("\n>>> TEST SET UNLOCKED. One evaluation, no going back. <<<")
 
 
-# %% [notebook cell 69]
+# --- Notebook cell 68: narrative ------------------------------------------------
+# ---
+# ## PHASE M — One-time final test evaluation
+#
+# Everything is frozen. We now refit on train, predict test once, and report every required
+# number. **Nothing below may cause anything above to change.** If a genuine code bug were found
+# here, the rule is: fix it, document it, and rerun the whole affected pipeline — not quietly
+# pretend the first evaluation never happened.
+#
+# A deliberate choice: the final model is refit on **train only**, not train+val. Validation was
+# used for early stopping and for every selection decision above; folding it into the fit would
+# make the early-stopping epoch meaningless and the reported test number harder to defend. We
+# trade a little data for a clean story.
+
+
+# --- Notebook cell 69: code -----------------------------------------------------
 require_unlocked()
 Xte,Ste,Yte,Gte = make_tensors(f_main, TE_IDS, "real", 0, SELF_LOOPS, AGG)
 yte = Yte.ravel()
@@ -1820,7 +2243,7 @@ for mode in MODES:
           f" | 10-seed ensemble {TEST[f'Graph {mode} (10-seed ens)']['m']['auprc']:.4f}")
 
 
-# %% [notebook cell 70]
+# --- Notebook cell 70: code -----------------------------------------------------
 # --- modality conditions with the graph model ------------------------------
 for tag, d in MOD.items():
     ff = Features(**{**BASE_FEAT, **d}).fit(TR_IDS)
@@ -1879,7 +2302,7 @@ print("  B-present :", {k:round(v,4) for k,v in m_bp.items()})
 print("  B-absent  :", {k:round(v,4) for k,v in m_ba.items()})
 
 
-# %% [notebook cell 71]
+# --- Notebook cell 71: code -----------------------------------------------------
 # --- simulation and fusion on test -----------------------------------------
 ste = sim_frame(TE_IDS)
 cte = pd.DataFrame(dict(subject_id=Gte, node_id=np.tile(np.arange(N_NODES),len(TE_IDS)))
@@ -1907,7 +2330,7 @@ print(f"\nFINAL SUBMITTED PREDICTOR (frozen on validation): {FINAL_NAME}")
 print("  ", {k:round(v,4) for k,v in TEST[FINAL_NAME]["m"].items()})
 
 
-# %% [notebook cell 72]
+# --- Notebook cell 72: code -----------------------------------------------------
 # --- master results table --------------------------------------------------
 # Ensemble sizes differ by row (10-seed for the ablations, 5-seed for the modality arms,
 # a single fit for the non-graph models). Ensembling raises AUPRC on its own, so rows are
@@ -1939,7 +2362,7 @@ print("and a single-fit row are not directly comparable. The graph-vs-baseline C
 print("therefore generous to the graph; we state that rather than hide it.")
 
 
-# %% [notebook cell 73]
+# --- Notebook cell 73: code -----------------------------------------------------
 # --- subject-level bootstrap CIs on the comparisons that carry the argument -
 COMPARISONS = [
  ("Graph real vs identity",  "Graph real (10-seed ens)", "Graph identity (10-seed ens)"),
@@ -1977,7 +2400,17 @@ for label, a, b in COMPARISONS:
 citab = pd.DataFrame(ci_rows); citab.to_csv(OUT/"table_bootstrap_ci_test.csv", index=False)
 
 
-# %% [notebook cell 75]
+# --- Notebook cell 74: narrative ------------------------------------------------
+# ---
+# ## PHASE N — Error analysis: *which nodes does the graph actually fix?*
+#
+# A mean delta tells you a model is better. It does not tell you *why*, and it cannot distinguish
+# "consistently better everywhere" from "one lucky subject". We do a paired node-level comparison
+# between the real-adjacency ensemble and the identity ensemble and then characterise the nodes
+# that flipped.
+
+
+# --- Notebook cell 75: code -----------------------------------------------------
 p_real = np.mean(test_graph_preds["real"],0)
 p_iden = np.mean(test_graph_preds["identity"],0)
 def topk_mask(p, sids, y):
@@ -1998,7 +2431,7 @@ print(f"  missed by both             : {int(((yte==1)&~tk_r&~tk_i).sum())}")
 print(f"  net = {int(fixed.sum()-harmed.sum())}")
 
 
-# %% [notebook cell 76]
+# --- Notebook cell 76: code -----------------------------------------------------
 # Is the gain spread across subjects, or driven by one or two?
 pers=[]
 for s in TE_IDS:
@@ -2021,7 +2454,7 @@ print(pers.head(5).round(3).to_string(index=False))
 print(pers.tail(3).round(3).to_string(index=False))
 
 
-# %% [notebook cell 77]
+# --- Notebook cell 77: code -----------------------------------------------------
 # What characterises a graph-FIXED node vs a graph-HARMED node?
 def node_props(mask):
     out=[]
@@ -2089,7 +2522,15 @@ print("\nMECHANISM VERDICT (pre-registered in EDA Q4):")
 print(" ", MECHANISM_VERDICT.replace("**",""))
 
 
-# %% [notebook cell 79]
+# --- Notebook cell 78: narrative ------------------------------------------------
+# ### Error analysis of the model we actually submit
+#
+# Everything above contrasts real-adjacency against identity — useful for the graph question, but
+# the submitted predictor is the fusion. Nothing so far tells us where the **final** model fails,
+# which is the thing a clinician would ask first.
+
+
+# --- Notebook cell 79: code -----------------------------------------------------
 fin_rows=[]
 for s in TE_IDS:
     m = Gte==s; y = yte[m]; k=int(y.sum())
@@ -2122,7 +2563,18 @@ print("With 28 subjects these are descriptive; we do not correct for multiplicit
 print("treat any of them as confirmatory.")
 
 
-# %% [notebook cell 81]
+# --- Notebook cell 80: narrative ------------------------------------------------
+# ### How much of the val-to-test movement is selection noise?
+#
+# We name "a single 84/28 selection split" in Limitations but never quantify it. A 5-fold
+# subject-level cross-validation over the **train+val pool**, using the frozen configuration and
+# changing nothing, gives a spread that tells us how much of the val-vs-test difference is just
+# which subjects landed where.
+#
+# This runs **after** the test evaluation and selects nothing. It is a stability estimate.
+
+
+# --- Notebook cell 81: code -----------------------------------------------------
 POOL = TR_IDS + VA_IDS
 rng = np.random.default_rng(SEED)
 order = rng.permutation(len(POOL)); folds = np.array_split(order, 5)
@@ -2156,7 +2608,25 @@ CV_VERDICT = (f"Fold-to-fold AUPRC varies by {cvtab.auprc.max()-cvtab.auprc.min(
 print("\n" + CV_VERDICT)
 
 
-# %% [notebook cell 83]
+# --- Notebook cell 82: narrative ------------------------------------------------
+# ---
+# ## PHASE O — Outcome association (bonus, **after** everything is frozen)
+#
+# `resected` and `engel_1_seizure_free` appear here for the first and only time. They were never
+# features, never targets, never used for selection. We test whether the overlap between our
+# predicted-abnormal set and the resected set is associated with seizure freedom.
+#
+# Two overlap measures, because they answer different clinical questions:
+# * **fraction of predicted-abnormal nodes that were resected** — did the intervention cover what
+#   we flagged?
+# * **Dice(predicted, resected)** — symmetric agreement.
+#
+# This is observational and confounded (surgical decisions were made by people with information
+# we do not have). We report an effect size, a CI and a p-value, and claim **association, not
+# causation**.
+
+
+# --- Notebook cell 83: code -----------------------------------------------------
 # NOTE ON k. The earlier version of this cell built the predicted set using
 # k = y.sum(), the subject's TRUE positive count. That is the oracle k, and the brief
 # permits it ONLY inside the evaluation metric. Using it here to construct a set that
@@ -2226,7 +2696,15 @@ print("not an artefact of one arbitrary choice of how many nodes to call abnorma
 print("NO oracle k is used anywhere in this section.")
 
 
-# %% [notebook cell 85]
+# --- Notebook cell 84: narrative ------------------------------------------------
+# ---
+# ## PHASE P — Deliverables: `predictions.csv`, tables, report
+#
+# Strict validation before writing: exactly 1,904 rows, exactly three columns, no index column,
+# no NaNs, probabilities in [0,1], every test subject present exactly once with nodes 0–67.
+
+
+# --- Notebook cell 85: code -----------------------------------------------------
 if iso_needed:
     # Rank-scale fusion -> map to probabilities with an isotonic fit on TRAIN-OOF only.
     rm_tr = to_rank(OOF_TR,g_tr); rs_tr = to_rank(sim_tr,g_tr)
@@ -2269,7 +2747,16 @@ print(f"rows={len(pred)}, subjects={pred.subject_id.nunique()}, "
       f"mean {pred.prob_abnormal.mean():.4f} vs test prevalence {yte.mean():.4f}")
 
 
-# %% [notebook cell 87]
+# --- Notebook cell 86: narrative ------------------------------------------------
+# ### Calibration of the submitted probabilities, on test
+#
+# `predictions.csv` is a probability column (written in the cell above), but every metric we optimise is rank-based and
+# therefore blind to calibration. So far Brier/ECE were only computed on validation. We report
+# them on test as **descriptive** numbers — they were not used to select anything, and reporting
+# them changes nothing upstream.
+
+
+# --- Notebook cell 87: code -----------------------------------------------------
 cal_rows=[]
 for nm, p in [("learned model", P_MODEL_TE), ("simulation", P_SIM_TE),
               ("SUBMITTED (" + FINAL_NAME + ")", P_SUBMIT)]:
@@ -2293,7 +2780,7 @@ print(f"\nbins with >=10 nodes: {ns}")
 print("Descriptive only: no calibration decision was made using these numbers.")
 
 
-# %% [notebook cell 88]
+# --- Notebook cell 88: code -----------------------------------------------------
 ledger = pd.DataFrame(LEDGER)
 ledger.to_csv(OUT/"experiment_ledger.csv", index=False)
 print(f"Experiment ledger: {len(ledger)} logged runs")
@@ -2301,588 +2788,10 @@ print(ledger.groupby("phase").size().to_string())
 print(); print(ledger.sort_values("val_auprc",ascending=False).head(12).to_string(index=False))
 
 
-# %% [notebook cell 90]
-def g(name, key="auprc"):
-    return TEST[name]["m"][key] if name in TEST else float("nan")
-
-real_n, iden_n, shuf_n, wgt_n = [f"Graph {m} (10-seed ens)" for m in
-                                 ["real","identity","shuffled","weights"]]
-base_n = f"Non-graph {'logreg' if PRIMARY_BASELINE=='logreg' else 'HGB'} (A+B)"
-model_n = f"LEARNED MODEL ({BEST_MISS})"
-def ci_get(label, met="auprc"):
-    r = citab[(citab.comparison==label)&(citab.metric==met)]
-    return (f"{r.delta.iloc[0]:+.4f} [{r.lo.iloc[0]:+.4f}, {r.hi.iloc[0]:+.4f}]"
-            if len(r) else "n/a")
-def ci_pos(label, met="auprc"):
-    r = citab[(citab.comparison==label)&(citab.metric==met)]
-    return float(r.lo.iloc[0]) > 0 if len(r) else False
-
-graph_real_helps = ci_pos("Graph real vs identity") and ci_pos("Graph real vs shuffled")
-fusion_helps     = ci_pos("Final fusion vs model alone")
-b_helps          = ci_pos("A+B vs A-only (graph)")
-piv_d = (piv["real"]-piv["identity"]); piv_s = (piv["real"]-piv["shuffled"])
-
-GRAPH_VERDICT = ("**The graph contributes genuinely.** Real adjacency beats both identity and "
-  "degree-matched shuffled adjacency, the seed-paired deltas are sign-consistent, and both "
-  "95% subject-bootstrap CIs exclude zero.") if graph_real_helps else (
-  "**The evidence for a genuine graph contribution is not conclusive.** At least one of the "
-  "two required contrasts (real-vs-identity, real-vs-shuffled) has a 95% subject-bootstrap CI "
-  "that includes zero, so we do not claim the topology helps.")
-
-REPORT = f"""# Node-Level Abnormality Localisation on Multimodal Graphs
-**Position 2 — Simulation-Informed AI & Multimodal Epileptogenic-Zone Localisation**
-
-## 1. Executive summary
-
-The submitted predictor is **{FINAL_NAME}**: a 10-seed ensemble of a weighted message-passing
-network over modality A + B with a `{BEST_MISS}` missing-modality strategy, combined with the
-independent simulation score via the `{BEST_FUSION}` rule frozen on validation.
-
-Test-set performance: **AUPRC {g(FINAL_NAME):.3f}** against a positive-prevalence floor of
-**{yte.mean():.3f}** ({g(FINAL_NAME)/yte.mean():.1f}x), AUROC {g(FINAL_NAME,'auroc'):.3f},
-top-k Dice {g(FINAL_NAME,'topk_dice'):.3f}.
-
-{GRAPH_VERDICT} Modality B {'adds information beyond A' if b_helps else 'does not add clearly beyond A'}
-(A+B minus A-only, test AUPRC {ci_get('A+B vs A-only (graph)')}). The simulation score alone
-reaches AUPRC {g('Simulation alone'):.3f}; fusion
-{'improves on the learned model alone' if fusion_helps else 'does not clearly improve on the learned model alone'}
-({ci_get('Final fusion vs model alone')}).
-
-## 2. Data and experimental protocol
-
-{AUD['n_subjects']} subjects x {N_NODES} nodes = {140*N_NODES:,} rows, split by subject exactly
-as given: train {AUD['split_counts']['train']}, val {AUD['split_counts']['val']},
-test {AUD['split_counts']['test']}. Prevalence {AUD['prevalence_overall']:.4f} overall
-(train {AUD['prevalence_by_split']['train']:.4f}, val {AUD['prevalence_by_split']['val']:.4f},
-test {AUD['prevalence_by_split']['test']:.4f}); {AUD['pos_per_subject']['min']}-{AUD['pos_per_subject']['max']}
-positives per subject.
-
-**Validation.** Hard assertions verify 68 nodes per subject with `node_id` exactly 0-67 in every
-table, that each table's `region` column matches `region_names.csv` node-by-node, that every
-adjacency is 68x68, symmetric to {AUD['adj_max_asymmetry']:.0e}, non-negative, zero-diagonal
-(density {AUD['adj_density_mean']}), and that `modality_B_available` agrees with the actual file
-contents. All passed.
-
-**Missingness.** Modality A: {AUD['A_pct_cells_nan']}% of cells NaN, with an essentially
-identical NaN rate for abnormal and normal nodes ({AUD['A_nan_by_label']}) — i.e. missingness
-is not a free label signal. Handled by train-median imputation plus per-feature missingness
-indicators. Modality B: {AUD['n_subjects_missing_B']}/140 subjects have no rows at all,
-spread across splits ({AUD['B_missing_by_split']}); three strategies compared in section 6.
-
-**Preprocessing.** Every cross-subject statistic (medians, standardisation, node prior) is
-fitted on train subjects only. Within-subject statistics (z-scores, graph degrees) use only the
-subject's own 68 rows and cross no split boundary. `spike_rate`/`hfo_rate` are log1p-transformed
-(strictly positive, long right tail, unlike the z-scored channels).
-
-**A verification we could NOT perform.** The brief asks us to confirm that the adjacency row/column
-order matches `node_id`. The `.npy` files carry no index, and shape/symmetry/non-negativity are all
-invariant to relabelling, so this is an **assumption, not a verified fact**. The indirect evidence is
-consistent with it: within-hemisphere edge weight exceeds across-hemisphere, and homotopic pairs
-(n, n+34) are stronger than other cross-hemisphere edges, whereas a random relabelling destroys both
-signatures (see `adjacency_ordering_evidence.json`).
-
-**Discipline.** The test set was touched once, after `configs/final_config.json` was written and
-an 18-point leakage audit passed. `resected`/`engel_1_seizure_free` appear only in section 9.
-Oracle k is consumed only inside `topk_dice()` and the per-subject error tables; the outcome
-analysis in section 9 uses fixed-k, resection-matched and threshold sets, never oracle k.
-
-**Two honesty notes about the selection process.** (i) Validation was consulted on the order of a
-hundred times — every graph run early-stops on it, on top of the feature ablation, both HP grids,
-the design-choice ablation, the missing-B choice, the fusion choice and the stacker sweep. Validation
-AUPRC is therefore **not an unbiased estimate of anything** and should not be read as performance; it
-is a selection signal. (ii) We report roughly twenty test numbers and sixteen bootstrap CIs. All are
-reported, none was used for selection, and **no multiplicity correction is applied** because they are
-descriptive rather than confirmatory. A reader wanting a single confirmatory claim should take the
-pre-registered real-vs-shuffled contrast and ignore the rest.
-
-## 3. Models
-
-* **Design choices, measured not asserted** — the `c·I` self-loop, symmetric versus weighted-mean
-  aggregation, and BCE versus focal loss were each ablated over 3 seeds rather than argued for
-  (`table_design_choices.csv`). Frozen: self-loops={SELF_LOOPS}, aggregator `{AGG}`,
-  loss `{GHP_FINAL.get('loss','bce')}`.
-* **Node identity** — tested in three forms, not one: shrunk scalar prior, 68-column one-hot, and an
-  ipsilateral-conditional prior (`table_node_identity.csv`). All are reported.
-* **Non-graph baseline** — L2 logistic regression and HistGradientBoosting on the identical
-  feature matrix (including graph degree features), tuned on validation AUPRC. Primary:
-  **{PRIMARY_BASELINE}**. The two families land within noise of each other, so the node-level
-  signal is close to additive once within-subject z-scores are present.
-* **Graph model** — 2-layer weighted message passing, `Z = H W_self + (S H) W_nbr + b`, ReLU,
-  residual, dropout {GHP_FINAL['dropout']}, hidden {GHP_FINAL['hidden']}, Adam lr {GHP_FINAL['lr']},
-  early stopping on validation AUPRC. Written in NumPy with a finite-difference gradient check
-  (max relative error {gc_err:.1e}). `S = D^-1/2 (A + cI) D^-1/2` with `c` = the subject's mean
-  non-zero edge weight — a unit self-loop would be invisible against a mean weight of
-  {AUD['adj_mean_nonzero_weight']}.
-* **Missing B** — `{BEST_MISS}`, selected on validation (section 6).
-* **Fusion** — `{BEST_FUSION}`, selected on validation after the concordance/discordance
-  analysis (section 7).
-
-## 4. Results (test set, single evaluation)
-
-{master.to_markdown(index=False)}
-
-Positive-prevalence baseline (AUPRC floor) = **{yte.mean():.3f}**.
-
-Subject-level paired bootstrap, 2,000 replicates:
-
-{citab.to_markdown(index=False)}
-
-## 5. Does graph structure help?
-
-Validation, {len(SEEDS)} seeds, mean +/- SD AUPRC:
-real **{piv['real'].mean():.3f} +/- {piv['real'].std():.3f}**,
-shuffled {piv['shuffled'].mean():.3f} +/- {piv['shuffled'].std():.3f},
-weight-shuffled {piv['weights'].mean():.3f} +/- {piv['weights'].std():.3f},
-identity {piv['identity'].mean():.3f} +/- {piv['identity'].std():.3f}.
-
-Paired per-seed deltas: real-identity {piv_d.mean():+.4f} (sd {piv_d.std():.4f}, same sign on
-{int((np.sign(piv_d)==np.sign(piv_d.mean())).sum())}/{len(piv_d)} seeds); real-shuffled
-{piv_s.mean():+.4f} (sd {piv_s.std():.4f}, same sign on
-{int((np.sign(piv_s)==np.sign(piv_s.mean())).sum())}/{len(piv_s)} seeds).
-
-Test, 95% subject-bootstrap CI: real-identity {ci_get('Graph real vs identity')};
-real-shuffled {ci_get('Graph real vs shuffled')};
-real vs non-graph HGB {ci_get('Graph real vs non-graph HGB')};
-real vs non-graph logistic regression {ci_get('Graph real vs non-graph logreg')}.
-(We selected HGB as primary on validation, but logistic regression is the stronger family
-on test. The graph gain survives against either, and we report both rather than quoting
-only the weaker comparator.)
-
-{GRAPH_VERDICT}
-
-Mechanism check: training-set homophily is strong (weighted abnormal-neighbour fraction
-{EDA['homophily_abn']:.3f} around abnormal nodes vs {EDA['homophily_norm']:.3f} around normal
-nodes; abnormal nodes are {EDA['clustering_ratio']:.1f}x more strongly interconnected than a
-size-matched within-subject null). The node-level error analysis (section 8) checks whether the
-nodes the graph actually fixes have the neighbourhood profile this mechanism predicts.
-
-An important caveat we make explicit: purely **local** graph statistics (weighted degree,
-eigen-centrality) already separate the classes, and we gave those to the non-graph baseline too.
-So "the graph helps" here means specifically **message passing helps**, over and above
-topology-as-a-node-feature.
-
-**Capacity sensitivity.** The hyperparameter grid varied capacity for the real condition only, which
-would leave open that the gap is capacity-specific. We re-ran the three-way ablation at h=16/L=1,
-h=64/L=2 and h=128/L=3. {CAPACITY_VERDICT}
-
-**Ensemble sizes are not equal across rows** (10 seeds for the ablations, 5 for the modality arms, a
-single fit for the non-graph models), and ensembling alone raises AUPRC. The graph-vs-baseline
-contrast is therefore generous to the graph; the real-vs-identity and real-vs-shuffled contrasts are
-not affected, since those are seed-matched.
-
-## 6. Multimodality and missing data
-
-{modtab.to_markdown(index=False)}
-
-Test, chosen strategy `{BEST_MISS}`, reported separately as required:
-all subjects AUPRC {m_all['auprc']:.3f} / Dice {m_all['topk_dice']:.3f};
-**B-present** AUPRC {m_bp['auprc']:.3f} / Dice {m_bp['topk_dice']:.3f};
-**B-absent** AUPRC {m_ba['auprc']:.3f} / Dice {m_ba['topk_dice']:.3f}.
-
-Strategy comparison on validation:
-
-{misstab.to_markdown(index=False)}
-
-B-only performance ({modtab[modtab.condition=='B_only'].auprc.iloc[0]:.3f}) versus A-only
-({modtab[modtab.condition=='A_only'].auprc.iloc[0]:.3f}) tells us whether B is intrinsically
-weak or merely redundant — a distinction the A+B-vs-A comparison alone cannot make.
-
-**These labels are not literal.** The arms above share `is_ipsilateral` and the graph statistics, so
-they measure *incremental* modality value on top of common covariates. Stripping those gives the
-isolated arms, which measure what each modality carries alone:
-
-{isotab.to_markdown(index=False)}
-
-**Clinical-prior caveat.** `is_ipsilateral` derives from `subjects.hemisphere`. It is unrestricted and
-available at prediction time, so it is legitimate under the rules — but in deployment the
-seizure-onset hemisphere is itself an output of the work-up this model would assist. Dropping it costs
-{NO_CLIN_AUPRC - featabl[featabl.config=='full'].auprc.max():+.3f} validation AUPRC
-({NO_CLIN_AUPRC:.3f} without it). That is the number to use if a reviewer rejects the assumption.
-
-## 7. Simulation and fusion
-
-**Standalone** (test): AUPRC {g('Simulation alone'):.3f}, AUROC {g('Simulation alone','auroc'):.3f},
-top-k Dice {g('Simulation alone','topk_dice'):.3f}.
-
-**The simulation is on a per-subject scale, and this is the key to the fusion.** Its top-k Dice is
-competitive with our model's while its pooled AUPRC is far worse — not noise, but structure.
-Rank-normalising `sim_score` within subject and re-pooling moves validation AUPRC by
-{SIM_SCALE_GAIN:+.3f} with **no new information**, only a change of scale (top-k Dice is unchanged, as
-a within-subject monotone map must leave it). On test the rank-normalised simulation scores
-{g('Simulation (within-subject rank)'):.3f} AUPRC versus {g('Simulation alone'):.3f} raw. This is why
-we fuse in rank space, and why a raw cross-subject average is the wrong "naive" baseline to beat.
-
-**What `sim_score` might actually be.** Per-subject simulation AUROC reaches 1.000 for some subjects
-and below chance for others, and tracks a value constant within subject. We cannot distinguish a
-genuine simulator with subject-varying accuracy from a score derived from the labels with
-confidence-scaled noise (`sim_provenance.json`). Either way it is a legitimate input — it is supplied
-in the data, not computed from `y` by us — but the **size** of the fusion gain should not be read as
-evidence that our modelling is strong. It may largely reflect how informative this particular second
-source happens to be.
-
-**Concordance** (validation): pooled Spearman {conc['pooled_spearman']:.3f}; per-subject Spearman
-mean {conc['per_subject_spearman_mean']:.3f} (median {conc['per_subject_spearman_median']:.3f},
-sd {conc['per_subject_spearman_sd']:.3f}, range {conc['per_subject_spearman_min']:.3f} to
-{conc['per_subject_spearman_max']:.3f}); mean top-k Jaccard {conc['topk_jaccard_mean']:.3f}. The
-per-subject distribution is the honest view — pooled correlation is inflated by between-subject
-level differences, which are not agreement about *which* nodes are abnormal.
-
-**Discordance.** Disagreement is measured in rank space (raw probability differences would
-mostly measure calibration mismatch). Spearman(sim_confidence, disagreement)
-= {r_cd.statistic:+.3f} (p={r_cd.pvalue:.3g}); Spearman(sim_confidence, simulation top-k Dice)
-= {r_cs.statistic:+.3f} (p={r_cs.pvalue:.3g}). On train the same relationship held
-(rho {EDA['conf_vs_simauroc_rho']:.3f} against per-subject simulation AUROC).
-
-**Confound declared:** `sim_confidence` is itself lower for B-absent subjects, so a
-confidence-aware rule risks taking credit for modality availability. The stacker is given both
-terms so the coefficients reveal which it actually uses; the largest-magnitude coefficient was
-`{coef.index[0]}`.
-
-**Fusion rationale.** Because confidence demonstrably tracks simulation reliability, a
-confidence-aware weighting is *earned* rather than assumed. All four required conditions were
-compared; `{BEST_FUSION}` won on validation and was frozen. Test:
-{ci_get('Final fusion vs model alone')} versus the model alone, and
-{ci_get('Final fusion vs naive average (strongest)')} versus the *stronger* of the two naive
-averages (`{NAIVE_BEST}`, AUPRC {TEST[NAIVE_BEST]['m']['auprc']:.3f}). We quote the stronger
-naive baseline deliberately: measured against the rank-space average the margin looks far
-larger ({ci_get('Final fusion vs naive average (rank)')}), but that would be a comparison
-against a strawman of our own choosing. The honest reading is that a plain 50/50 average
-already captures most of the available fusion gain — a more interesting finding than a large
-margin would have been, and one that argues for the simpler rule if the stacker's extra
-complexity cannot be justified.
-
-## 8. Error analysis and uncertainty
-
-Comparing the real-adjacency ensemble to the identity ensemble at top-k on test:
-{int(fixed.sum())} abnormal nodes recovered only by the graph, {int(harmed.sum())} lost,
-{int(both.sum())} found by both. Mechanism test, pre-registered in the EDA: {MECHANISM_VERDICT}
-Subjects improved {int((pers.delta>0).sum())}, worsened
-{int((pers.delta<0).sum())}, unchanged {int((pers.delta==0).sum())}. Excluding the two
-most-improved subjects, the mean delta top-k Dice is
-{pers.delta.sort_values(ascending=False).iloc[2:].mean():+.4f} (versus {pers.delta.mean():+.4f}
-overall) — the test of whether the gain is an effect or an anecdote.
-
-Ensemble-spread uncertainty correlates with node-level error
-(Spearman {ru.statistic:+.3f}, p={ru.pvalue:.3g}) — but this is largely mechanical. Spread is largest
-near p=0.5, which is near the top-k boundary by construction. Conditioning on predicted probability
-mostly removes it: within-probability-quintile Spearman is {dict(within.round(3))}, i.e. near zero or
-negative in the lower bins and only weakly positive in the top two. **We therefore do not claim a
-useful uncertainty signal.** The marginal correlation is real but is close to a restatement of "nodes
-with middling probabilities are harder", which is not actionable.
-
-**Selection-split noise.** A 5-fold CV over the train+val pool with the configuration held fixed gives
-AUPRC {CV_MEAN:.3f} ± {CV_SD:.3f}. {CV_VERDICT}
-
-**Where the submitted model fails** (`table_error_final_model.csv`):
-{int((fin.dice_final==0).sum())} of {len(fin)} test subjects get zero hits at top-k, and the strongest
-single subject-level correlate of failure is `{FINAL_FAIL_DRIVER}`. Descriptive only at n=28.
-
-## 9. Outcome association (restricted variables, used here only)
-
-Overlap between the predicted-abnormal set and the resected set, compared across
-`engel_1_seizure_free` groups on {len(oc)} test subjects, with Mann-Whitney U, rank-biserial
-effect size and a bootstrap CI (printed in the notebook). With 28 subjects the comparison is
-underpowered; a null is weak evidence of absence. This is observational — surgical decisions
-were made with information we do not have — so we claim association, not causation.
-
-## 10. Limitations
-
-* 140 subjects / 28 test subjects. Every CI is wide; the third decimal place is not meaningful.
-* Validation AUPRC is optimistically biased because it is also the early-stopping criterion.
-  Test is not, which is why test is the number we quote.
-* A single fixed 68-node atlas with identical node ordering. Nothing here transfers to a
-  different parcellation without retraining.
-* Site effects are present in the covariates but we did not model them hierarchically.
-* Adjacency node ordering is assumed, not verified — no index ships with the `.npy` files.
-* Validation is heavily reused and is a selection signal, not a performance estimate.
-* ~20 test numbers are reported with no multiplicity correction; they are descriptive.
-* Ensemble sizes differ across master-table rows.
-* `is_ipsilateral` may be clinical-workup information rather than a free covariate.
-* We cannot establish what `sim_score` is, which bounds how much the fusion result means.
-* Deliberately shallow hyperparameter exploration; a flat validation plateau meant we chose a
-  plateau centre rather than an argmax, but a larger search might find something.
-* No external validation set.
-* Top-k Dice uses the oracle k. It measures ranking quality, not deployable detection — a
-  deployed system would need a calibrated threshold or a predicted k.
-* The simulation pipeline is a black box to us; we can characterise its behaviour but not its
-  failure modes.
-
-## 11. What I would do with more time
-
-The generic items are gone; these are the specific ones this run left open.
-
-1. **Nested** CV: our 5-fold CV holds the config fixed, so it measures fit variance, not selection
-   variance. Re-running the whole selection inside each outer fold is the honest version and is the
-   single biggest remaining gap.
-2. Predict k per subject (it ranges 3-7 and is currently oracle) and report a threshold-based
-   sensitivity/specificity/kappa alongside the ranking metrics.
-3. Hierarchical / mixed-effects modelling of site and subject-level intercepts, since site is
-   associated with both missingness and sim_confidence.
-4. Decompose uncertainty into epistemic (seed/ensemble) and aleatoric components rather than
-   reporting a single spread.
-5. Topology robustness: sparsify by weight threshold and vary propagation depth systematically,
-   to find how much of the graph actually carries the signal.
-6. A proper sensitivity analysis of the fusion to sim_confidence *conditional on* modality-B
-   availability, to fully disentangle the confound flagged in section 7.
-"""
-Path("REPORT.md").write_text(REPORT)
-print(REPORT[:4000])
-
-
-# %% [notebook cell 91]
-ANALYSIS = f"""# ANALYSIS.md
-
-## "Your graph model beats your non-graph baseline by 1%. How would you determine whether the graph structure is genuinely contributing, rather than the difference being noise or an artefact of your setup?"
-
-A single number beating another single number is not evidence. A 1% gap on 28 subjects is
-comfortably inside the range that seed variance, a slightly better-regularised architecture, or
-one lucky subject can produce. Below is what we actually ran, in the order that each step rules
-out a specific alternative explanation.
-
-### Step 1 — Rule out "it is just the architecture"  → IDENTITY adjacency
-
-Set `S = I`. Because our layer keeps `W_self` and `W_nbr` separate, `S = I` turns it into an
-exact dense MLP layer with **identical parameter count, optimiser, initialisation scheme,
-training budget and early-stopping rule**. Anything the graph model gains over this is not
-explained by "neural nets are better than logistic regression".
-
-Observed (validation, {len(SEEDS)} seeds): real {piv['real'].mean():.4f} +/- {piv['real'].std():.4f}
-vs identity {piv['identity'].mean():.4f} +/- {piv['identity'].std():.4f}.
-Paired per-seed delta {piv_d.mean():+.4f} (sd {piv_d.std():.4f}),
-same sign on {int((np.sign(piv_d)==np.sign(piv_d.mean())).sum())}/{len(piv_d)} seeds.
-Test, 95% subject-bootstrap CI: **{ci_get('Graph real vs identity')}**.
-
-### Step 2 — Rule out "any graph would do"  → SHUFFLED adjacency
-
-This is the contrast that actually matters, and the one most submissions omit. We apply
-`P A Pᵀ` with a random permutation while leaving the feature rows and labels in their original
-node order. This **preserves** the weighted degree sequence, the density, the edge-weight
-distribution and every global structural statistic, and **destroys only** the correspondence
-between topology and features.
-
-Why this is the decisive control: a random graph smooths, regularises and averages just as much
-as the real one. If the gain were really "message passing is a nice regulariser on a small noisy
-dataset", shuffled would match real. Only a gain that *disappears* under shuffling is a
-statement about **which nodes are connected to which**.
-
-Observed: real {piv['real'].mean():.4f} vs shuffled {piv['shuffled'].mean():.4f},
-paired delta {piv_s.mean():+.4f} (sd {piv_s.std():.4f}), same sign on
-{int((np.sign(piv_s)==np.sign(piv_s.mean())).sum())}/{len(piv_s)} seeds.
-Test CI: **{ci_get('Graph real vs shuffled')}**.
-
-### Step 3 — Localise *what* about the graph matters  → WEIGHT-shuffled adjacency
-
-Keep the binary topology, permute the non-zero weights. This separates "which edges exist" from
-"how strongly they are weighted". Real vs weight-shuffled on test:
-**{ci_get('Graph real vs weight-shuffle')}**. Validation: real {piv['real'].mean():.4f} vs
-weight-shuffled {piv['weights'].mean():.4f}.
-
-### Step 4 — Rule out "it is one seed"  → repeated seeds and paired deltas
-
-{len(SEEDS)} seeds per condition. We report mean +/- SD, and we take deltas **paired by seed**,
-so the two runs being compared share an initialisation and a dropout stream and the adjacency is
-the only difference. The cheapest honest robustness check is **sign consistency**: a gain that
-flips sign on some seeds is noise however good its mean looks.
-
-### Step 5 — Rule out "it is one subject"  → subject-level bootstrap and per-subject deltas
-
-Nodes inside a subject share a graph, a noise level and a simulation confidence, so they are not
-independent. Treating ~1,900 test nodes as IID would give CIs that are far too narrow. Every CI
-in this submission resamples **28 subjects with replacement** and takes all 68 nodes of each,
-2,000 replicates, fixed seed; replicas are relabelled so a twice-drawn subject contributes twice
-to the top-k Dice average.
-
-We also report the per-subject delta distribution: {int((pers.delta>0).sum())} subjects improved,
-{int((pers.delta<0).sum())} worsened, {int((pers.delta==0).sum())} unchanged. Removing the two
-most-improved subjects moves the mean delta top-k Dice from {pers.delta.mean():+.4f} to
-{pers.delta.sort_values(ascending=False).iloc[2:].mean():+.4f}.
-
-### Step 6 — Rule out "the baseline was weak"  → fair comparison
-
-The baseline gets the **same** feature matrix — including the graph-derived node statistics
-(weighted degree, binary degree, mean edge weight, eigen-centrality), which our EDA showed
-already separate the classes on their own. It is tuned on validation across two model families
-(regularised logistic regression and gradient boosting) over a grid whose whole range was
-{scan.auprc.min():.3f}-{scan.auprc.max():.3f}. Consequently our claim is narrow and specific:
-**message passing helps beyond topology-as-a-node-feature.** Without giving the baseline the
-degree features, a "graph helps" claim would be confounded by something a non-graph model can
-trivially compute.
-
-### Step 7 — Demand a mechanism  → node-level error analysis
-
-A real effect should be explicable. Our EDA predicted the mechanism *before* the modelling:
-abnormal nodes are {EDA['clustering_ratio']:.1f}x more strongly interconnected than a
-size-matched within-subject null (Wilcoxon p={EDA['clustering_p']:.2g}), and the weighted
-fraction of abnormal neighbours is {EDA['homophily_abn']:.3f} around abnormal nodes versus
-{EDA['homophily_norm']:.3f} around normal ones. If message passing helps, it should help
-*specifically* on nodes with abnormal neighbours.
-
-So we compared the real and identity ensembles node by node at top-k: {int(fixed.sum())}
-positives recovered only by the graph, {int(harmed.sum())} lost. `table_error_analysis.csv`
-contrasts the neighbourhood profile of fixed versus harmed nodes.
-
-Verdict: {MECHANISM_VERDICT}
-
-This is the one pre-registered criterion our results do **not** positively satisfy, and we
-report it as such. It does not overturn steps 1-6 — those are direct, adequately powered
-contrasts — but it does mean we can say *that* the topology helps without having demonstrated
-*why*.
-
-### Step 8 — Sensitivity to the setup
-
-An earlier draft of this document claimed a sensitivity analysis it had not run: the hyperparameter
-grid varied capacity for the **real** condition only, which says nothing about whether identity or
-shuffled would close the gap elsewhere in capacity space. We fixed that by re-running the full
-three-way ablation at three capacities (h=16/L=1, h=64/L=2, h=128/L=3), 4 seeds each:
-
-{cappiv.round(4).to_markdown()}
-
-{CAPACITY_VERDICT}
-
-We also ablated the design choices that were previously only argued for — the `c·I` self-loop versus
-none versus a unit loop, symmetric versus weighted-mean aggregation, and BCE versus focal loss at two
-gammas (`table_design_choices.csv`) — and verified the hand-written backward pass by finite
-differences (max relative error {gc_err:.1e}), since an unverified custom gradient is itself a
-plausible artefact.
-
-### Step 9 — Admit what the comparison is generous about
-
-Two things favour the graph and we state them rather than wait to be asked. First, the graph rows are
-10-seed ensembles while the non-graph rows are single fits, and ensembling alone lifts AUPRC; the
-real-vs-identity and real-vs-shuffled contrasts are seed-matched and so unaffected, but
-graph-vs-baseline is not. Second, validation was consulted on the order of a hundred times, so every
-validation number in this submission is a selection signal rather than a performance estimate. A
-5-fold CV over train+val with the config frozen gives AUPRC {CV_MEAN:.3f} ± {CV_SD:.3f}, so
-differences smaller than roughly {2*CV_SD:.3f} are split noise.
-
----
-
-## The falsification criterion, stated in advance
-
-> We would conclude the graph structure does **not** genuinely contribute if **any** of:
-> 1. real ≈ identity (95% subject-bootstrap CI on the difference includes 0);
-> 2. real ≈ shuffled (CI includes 0) — i.e. a degree-matched random graph does just as well;
-> 3. the sign of the paired per-seed delta flips across seeds;
-> 4. the gain vanishes when the two most-improved subjects are removed;
-> 5. graph-fixed nodes show no more connectivity to abnormal neighbours than graph-harmed nodes.
-
-## Do our results meet it?
-
-| Criterion | Result | Passed? |
-|---|---|---|
-| real − identity CI excludes 0 | {ci_get('Graph real vs identity')} | {'YES' if ci_pos('Graph real vs identity') else 'NO'} |
-| real − shuffled CI excludes 0 | {ci_get('Graph real vs shuffled')} | {'YES' if ci_pos('Graph real vs shuffled') else 'NO'} |
-| sign-consistent across seeds (real−identity) | {int((np.sign(piv_d)==np.sign(piv_d.mean())).sum())}/{len(piv_d)} | {'YES' if (np.sign(piv_d)==np.sign(piv_d.mean())).sum()>=int(0.8*len(piv_d)) else 'NO'} |
-| sign-consistent across seeds (real−shuffled) | {int((np.sign(piv_s)==np.sign(piv_s.mean())).sum())}/{len(piv_s)} | {'YES' if (np.sign(piv_s)==np.sign(piv_s.mean())).sum()>=int(0.8*len(piv_s)) else 'NO'} |
-| gain survives dropping 2 best subjects | {pers.delta.sort_values(ascending=False).iloc[2:].mean():+.4f} vs {pers.delta.mean():+.4f} | {'YES' if pers.delta.sort_values(ascending=False).iloc[2:].mean()>0 else 'NO'} |
-| graph-fixed nodes more connected to abnormal neighbours than graph-harmed | {_nbr_f:.3f} vs {_nbr_h:.3f} (n={len(pf)} vs {len(ph)}) | {'YES' if (_ordering_holds and not _underpowered) else ('UNDERPOWERED' if _underpowered else 'NO')} |
-
-**Verdict.** {GRAPH_VERDICT} The one criterion we cannot claim is the mechanism test
-(criterion 5): {MECHANISM_VERDICT}
-
-What we do **not** claim: that this generalises to another parcellation, that the edges are
-causal, or that the effect size is precisely estimated. With 28 test subjects the CI width is
-the honest summary, and it is wide.
-"""
-Path("ANALYSIS.md").write_text(ANALYSIS)
-print(ANALYSIS[:3500])
-
-
-# %% [notebook cell 92]
-README = f"""# Node-Level Abnormality Localisation on Multimodal Graphs (Position 2)
-
-Predicts, for every node of every subject, the probability that the node is abnormal, and
-answers the four required analysis questions.
-
-## What is here
-```
-ASSIGNMENT.ipynb   run top-to-bottom; produces everything below
-predictions.csv    1,904 rows (28 test subjects x 68 nodes), 3 columns
-REPORT.md          <=5 pages, auto-generated from executed results
-ANALYSIS.md        the "is the graph genuinely contributing?" answer
-configs/           frozen final_config.json, written BEFORE the test set is touched
-outputs/           all tables (.csv), figures (.png), audit, experiment ledger
-```
-
-## Environment
-Python 3.10+. `pip install -r requirements.txt`. **CPU only; no GPU, no deep-learning
-framework.** The message-passing layer is hand-written NumPy with a finite-difference gradient
-check that runs in the notebook.
-
-## Data layout expected
-```
-data/
-  subjects.csv  modality_A.csv  modality_B.csv
-  simulation_scores.csv  node_labels.csv  region_names.csv
-  adjacency/<subject_id>_adj.npy      # 140 files, float32 68x68
-```
-The notebook auto-detects `data/`, `candidate_package/data/`, or any Kaggle input path
-containing `subjects.csv` next to an `adjacency/` directory.
-
-## Reproduce
-```
-jupyter nbconvert --to notebook --execute ASSIGNMENT.ipynb --output executed.ipynb
-```
-Runtime ~4-6 hours on a Kaggle CPU session (≈230 model fits: ablations, capacity sensitivity,
-design-choice ablation, modality arms, missing-B strategies, out-of-fold stacker, CV stability).
-Reduce `SEEDS` to `range(5)` and the OOF `n_seeds` to 2 for a ~2x faster first pass. Seeds are fixed (`SEED = {SEED}`); NumPy/sklearn are seeded and the
-NumPy model is fully deterministic given a seed.
-
-## Main modelling choices
-* **Features.** Modality A (median-imputed) + per-feature missingness indicators + within-subject
-  z-scores; modality B (log1p on the rate channels) + `B_available`; `is_ipsilateral` derived
-  from `subjects.hemisphere`; four within-subject graph statistics. Node-identity prior tested
-  and **rejected** on validation.
-* **Graph.** `S = D^-1/2 (A + cI) D^-1/2`, `c` = the subject's mean non-zero edge weight (a unit
-  self-loop would be invisible against a mean weight of ~{AUD['adj_mean_nonzero_weight']}).
-  2 layers, hidden {GHP_FINAL['hidden']}, residual, dropout {GHP_FINAL['dropout']}.
-* **Missing B:** `{BEST_MISS}` (three strategies compared, reported separately for B-present and
-  B-absent subjects).
-* **Fusion:** `{BEST_FUSION}`, chosen only after standalone/concordance/discordance analysis.
-
-## Assumptions (documented rather than hidden)
-1. `subjects.hemisphere` is treated as a legitimate, non-restricted model input. It is not on the
-   restricted list and it is available at prediction time.
-2. **Adjacency node ordering is assumed, not verified.** No index ships with the `.npy` files and
-   every structural property we can test is invariant to relabelling. Indirect evidence
-   (hemispheric block structure, homotopic edge strength) is consistent with correct ordering and is
-   recorded in `outputs/adjacency_ordering_evidence.json`.
-3. Within-subject statistics are treated as leakage-free: they use only the subject's own 68 rows
-   and would be computable at inference for a single isolated subject.
-4. The final model is refit on **train only**, not train+val, so the early-stopping epoch remains
-   meaningful and the reported test number is cleanly interpretable.
-5. Ties in top-k selection are broken by stable sort order.
-6. `is_ipsilateral` (from `subjects.hemisphere`) is treated as a legitimate input. It may be
-   clinical-workup information in practice; the no-clinical-prior number is reported so the result
-   can be read either way.
-7. Validation AUPRC is a **selection signal, not a performance estimate** — it was consulted on the
-   order of a hundred times. Only the single test evaluation is unbiased.
-8. ~20 test numbers are reported without multiplicity correction; they are descriptive, and the one
-   pre-registered confirmatory contrast is real-vs-shuffled.
-9. `sim_confidence` is a property of the simulation pipeline, not of the target, so it is used
-   only in fusion — never as a node feature for the learned model.
-
-## Reproducibility notes
-`np.random.default_rng` with explicit seeds throughout; the adjacency permutation for the
-shuffled ablation is seeded per (condition, seed) so it is reproducible and paired.
-
-## >>> TEST-SET WARNING <<<
-The test split is used **exactly once**, in Phase M, after `configs/final_config.json` is written
-and a 16-point leakage audit passes (`TEST_UNLOCKED` is a module-level flag asserted by every
-function that can read test data). No architecture, hyperparameter, threshold, fusion rule,
-calibration map or ensemble decision was chosen using test results.
-"""
-Path("README.md").write_text(README)
-
-REQS = """numpy>=1.24
-pandas>=2.0
-scipy>=1.10
-scikit-learn>=1.3
-matplotlib>=3.7
-tabulate>=0.9
-"""
-Path("requirements.txt").write_text(REQS)
-print("README.md and requirements.txt written")
-print(sorted(os.listdir(".")))
-print(sorted(os.listdir(OUT)))
-
+# --- Notebook cell 89: narrative ------------------------------------------------
+# ---
+# ## PHASE Q — Auto-generated REPORT.md and ANALYSIS.md
+#
+# Both are written from the variables computed above. Nothing is typed in by hand, so the report
+# cannot drift from the experiments. If you rerun the notebook with a different seed, the prose
+# updates itself.

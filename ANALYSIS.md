@@ -1,127 +1,68 @@
 # ANALYSIS.md
 
-## "Your graph model beats your non-graph baseline by 1%. How would you determine whether the graph structure is genuinely contributing, rather than the difference being noise or an artefact of your setup?"
+**Candidate:** Lighittha P R  
+**Email:** ligpersonal@gmail.com
 
-A single number beating another single number is not evidence. A 1% gap on 28 subjects is
-comfortably inside the range that seed variance, a slightly better-regularised architecture, or
-one lucky subject can produce. Below is what we actually ran, in the order that each step rules
-out a specific alternative explanation.
 
-### Step 1 — Rule out "it is just the architecture"  → IDENTITY adjacency
+## Required question
 
-Set `S = I`. Because our layer keeps `W_self` and `W_nbr` separate, `S = I` turns it into an
-exact dense MLP layer with **identical parameter count, optimiser, initialisation scheme,
-training budget and early-stopping rule**. Anything the graph model gains over this is not
-explained by "neural nets are better than logistic regression".
+> **My graph model beats a non-graph baseline. How do I determine whether graph structure is genuinely contributing rather than the difference being noise or an artefact?**
 
-Observed (validation, 10 seeds): real 0.5413 +/- 0.0090
-vs identity 0.4584 +/- 0.0180.
-Paired per-seed delta +0.0829 (sd 0.0226),
-same sign on 10/10 seeds.
-Test, 95% subject-bootstrap CI: **+0.0995 [+0.0413, +0.1614]**.
+I would not accept a single GNN-minus-baseline score as evidence. A small gain can come from seed variance, a stronger function class, a favorable split, leakage, regularisation, or a few influential subjects. I therefore test the graph claim through matched controls, repeated seeds, subject-level uncertainty, capacity sensitivity and error analysis.
 
-### Step 2 — Rule out "any graph would do"  → SHUFFLED adjacency
+### 1. Identity adjacency: does message passing add anything beyond the architecture?
 
-This is the contrast that actually matters, and the one most submissions omit. We apply
-`P A Pᵀ` with a random permutation while leaving the feature rows and labels in their original
-node order. This **preserves** the weighted degree sequence, the density, the edge-weight
-distribution and every global structural statistic, and **destroys only** the correspondence
-between topology and features.
+I replace the graph operator with identity while keeping the same model family, parameterisation, optimiser, training budget and early-stopping logic. This removes neighbour exchange while preserving the neural architecture. On validation across 10 paired seeds, real adjacency gives **0.5413±0.0090 AUPRC** and identity gives **0.4584±0.0180**. The paired real-minus-identity delta is +0.0829 (SD 0.0226) and has the same sign on 10/10 seeds. On test, the ensemble difference is **+0.0995**, with 95% subject-bootstrap CI **[+0.0413, +0.1614]**.
 
-Why this is the decisive control: a random graph smooths, regularises and averages just as much
-as the real one. If the gain were really "message passing is a nice regulariser on a small noisy
-dataset", shuffled would match real. Only a gain that *disappears* under shuffling is a
-statement about **which nodes are connected to which**.
+This rejects the explanation that the gain is simply “a neural network is better than the non-graph baseline.”
 
-Observed: real 0.5413 vs shuffled 0.4674,
-paired delta +0.0739 (sd 0.0161), same sign on
-10/10 seeds.
-Test CI: **+0.0833 [+0.0301, +0.1410]**.
+### 2. Shuffled adjacency: would any smoothing graph work?
 
-### Step 3 — Localise *what* about the graph matters  → WEIGHT-shuffled adjacency
+I permute node order in the adjacency while leaving feature/label rows fixed. This preserves graph size, density, degree distribution and edge-weight distribution but destroys the correspondence between a node's features and its true neighbours. A generic smoothing/regularisation benefit should survive this control; a topology-specific benefit should not.
 
-Keep the binary topology, permute the non-zero weights. This separates "which edges exist" from
-"how strongly they are weighted". Real vs weight-shuffled on test:
-**+0.0111 [-0.0149, +0.0282]**. Validation: real 0.5413 vs
-weight-shuffled 0.5310.
+Across 10 validation seeds, shuffled adjacency gives **0.4674±0.0121 AUPRC**, versus 0.5413 for real. The paired delta is +0.0739 (SD 0.0161), positive on 10/10 seeds. On test, real is **0.5818** and shuffled is **0.4985**, a difference of **+0.0833 [ +0.0301, +0.1410 ]** by subject bootstrap.
 
-### Step 4 — Rule out "it is one seed"  → repeated seeds and paired deltas
+This is my strongest evidence that the **correct node-topology correspondence**, rather than generic message passing, is contributing.
 
-10 seeds per condition. We report mean +/- SD, and we take deltas **paired by seed**,
-so the two runs being compared share an initialisation and a dropout stream and the adjacency is
-the only difference. The cheapest honest robustness check is **sign consistency**: a gain that
-flips sign on some seeds is noise however good its mean looks.
+### 3. Weight-shuffled adjacency: is the signal topology or exact edge strength?
 
-### Step 5 — Rule out "it is one subject"  → subject-level bootstrap and per-subject deltas
+I keep the binary topology fixed and permute the non-zero edge weights. The test AUPRC becomes **0.5707**, only 0.0111 below real, with CI **[-0.0149, +0.0282]** for AUPRC. I therefore do not claim that precise edge magnitudes are essential. The dominant effect appears to be **which nodes are connected**, not the exact weight assigned to every edge.
 
-Nodes inside a subject share a graph, a noise level and a simulation confidence, so they are not
-independent. Treating ~1,900 test nodes as IID would give CIs that are far too narrow. Every CI
-in this submission resamples **28 subjects with replacement** and takes all 68 nodes of each,
-2,000 replicates, fixed seed; replicas are relabelled so a twice-drawn subject contributes twice
-to the top-k Dice average.
+### 4. Repeated seeds and paired variability
 
-We also report the per-subject delta distribution: 13 subjects improved,
-0 worsened, 15 unchanged. Removing the two
-most-improved subjects moves the mean delta top-k Dice from +0.1409 to
-+0.1107.
+I use 10 seeds for each required graph condition. Pairing comparisons by seed keeps initialisation and stochastic training effects matched, so the adjacency condition is the main change. Real-minus-identity and real-minus-shuffled are positive on **10/10 seeds**. This makes a one-seed explanation implausible.
 
-### Step 6 — Rule out "the baseline was weak"  → fair comparison
+### 5. Subject-level confidence intervals, not node-IID intervals
 
-The baseline gets the **same** feature matrix — including the graph-derived node statistics
-(weighted degree, binary degree, mean edge weight, eigen-centrality), which our EDA showed
-already separate the classes on their own. It is tuned on validation across two model families
-(regularised logistic regression and gradient boosting) over a grid whose whole range was
-0.460-0.508. Consequently our claim is narrow and specific:
-**message passing helps beyond topology-as-a-node-feature.** Without giving the baseline the
-degree features, a "graph helps" claim would be confounded by something a non-graph model can
-trivially compute.
+The 68 nodes within a subject share the same graph and subject-level context, so treating 1,904 test nodes as independent would overstate certainty. I bootstrap **subjects**, drawing 28 subjects with replacement and retaining all of each selected subject's nodes, for 2,000 replicates. Both required graph contrasts have 95% CIs excluding zero:
 
-### Step 7 — Demand a mechanism  → node-level error analysis
+- real vs identity: **+0.0995 [ +0.0413, +0.1614 ] AUPRC**;
+- real vs shuffled: **+0.0833 [ +0.0301, +0.1410 ] AUPRC**.
 
-A real effect should be explicable. Our EDA predicted the mechanism *before* the modelling:
-abnormal nodes are 2.9x more strongly interconnected than a
-size-matched within-subject null (Wilcoxon p=1.7e-15), and the weighted
-fraction of abnormal neighbours is 0.160 around abnormal nodes versus
-0.077 around normal ones. If message passing helps, it should help
-*specifically* on nodes with abnormal neighbours.
+I also report graph versus both non-graph families. Relative to the validation-selected HGB baseline, the AUPRC gain is +0.0906 [0.0436, 0.1321]. Relative to logistic regression, which happens to be stronger on test, it is +0.0561 [-0.0030, 0.1159]. I report both rather than selecting the easier comparator after seeing test results.
 
-So we compared the real and identity ensembles node by node at top-k: 22
-positives recovered only by the graph, 4 lost. `table_error_analysis.csv`
-contrasts the neighbourhood profile of fixed versus harmed nodes. If fixed nodes do **not** show
-more/stronger connections to other abnormal nodes than harmed nodes, then the gain is not coming
-from the mechanism we proposed and we should distrust it even if the CI looks good.
+### 6. Baseline fairness
 
-### Step 8 — Sensitivity to the setup
+My non-graph models receive the same node feature matrix, including graph-derived **local** statistics such as weighted degree and eigen-centrality. This matters because my training EDA shows those local graph statistics already separate abnormal and normal nodes. Therefore real-versus-identity/shuffled asks a narrower and fairer question: **does propagation over the actual graph add information beyond topology that can be summarised as row-wise features?**
 
-The conclusion should not hinge on one configuration. We varied depth (1/2/3), width, dropout,
-learning rate, class weighting and the residual connection, and adopted a non-default setting
-only if it beat the default by more than the default's own seed-to-seed spread. We also verified
-the hand-written backward pass by finite differences (max relative error 1.3e-08) — an
-unverified custom gradient is itself a plausible artefact.
+### 7. Capacity and design sensitivity
 
----
+A graph gap could be an artefact of one width/depth setting. I therefore rerun real, shuffled and identity at three capacities: h=16/L=1, h=64/L=2 and h=128/L=3. Real remains above both controls at every capacity; the smallest real-minus-identity margin is +0.0712 and the smallest real-minus-shuffled margin is +0.0621 AUPRC.
 
-## The falsification criterion, stated in advance
+I also ablate self-loop choice, symmetric versus weighted-mean aggregation, and BCE versus focal loss. These checks show that the main real-vs-control ordering is not dependent on one fragile design decision. The custom backward pass is additionally verified by finite differences (maximum relative gradient error 1.3e-08).
 
-> We would conclude the graph structure does **not** genuinely contribute if **any** of:
-> 1. real ≈ identity (95% subject-bootstrap CI on the difference includes 0);
-> 2. real ≈ shuffled (CI includes 0) — i.e. a degree-matched random graph does just as well;
-> 3. the sign of the paired per-seed delta flips across seeds;
-> 4. the gain vanishes when the two most-improved subjects are removed;
-> 5. graph-fixed nodes show no more connectivity to abnormal neighbours than graph-harmed nodes.
+### 8. Error analysis: which nodes and subjects does the graph fix?
 
-## Do our results meet it?
+At test top-k, real message passing recovers **22 positive nodes that identity misses** and loses 4 positives that identity gets. At the subject level, **13 subjects improve, 0 worsen, and 15 are unchanged**. Removing the two most-improved subjects still leaves a mean Dice improvement of +0.1107 versus +0.1409 overall, so the effect is not a two-subject anecdote.
 
-| Criterion | Result | Passed? |
-|---|---|---|
-| real − identity CI excludes 0 | +0.0995 [+0.0413, +0.1614] | YES |
-| real − shuffled CI excludes 0 | +0.0833 [+0.0301, +0.1410] | YES |
-| sign-consistent across seeds (real−identity) | 10/10 | YES |
-| sign-consistent across seeds (real−shuffled) | 10/10 | YES |
-| gain survives dropping 2 best subjects | +0.1107 vs +0.1409 | YES |
+I had a mechanistic hypothesis from training EDA: abnormal nodes are more strongly interconnected and have a higher weighted fraction of abnormal neighbours. I therefore compare neighbourhood properties of graph-fixed versus graph-harmed nodes. This specific mechanism test is **underpowered**: there are only 22 fixed and 4 harmed nodes, and the observed abnormal-neighbour fractions are 0.134 versus 0.130. I do not count this as positive evidence. It means I have strong evidence **that** topology helps, but not enough evidence to establish **why** at the individual-node mechanism level.
 
-**Verdict.** **The graph contributes genuinely.** Real adjacency beats both identity and degree-matched shuffled adjacency, the seed-paired deltas are sign-consistent, and both 95% subject-bootstrap CIs exclude zero.
+### 9. What result would make me conclude the graph does not help?
 
-What we do **not** claim: that this generalises to another parcellation, that the edges are
-causal, or that the effect size is precisely estimated. With 28 test subjects the CI width is
-the honest summary, and it is wide.
+I would reject the graph-contribution claim if real and identity were indistinguishable, if real and shuffled had a CI crossing zero, if seed-paired differences frequently changed sign, if the effect vanished after removing one or two influential subjects, or if the ordering disappeared across reasonable model capacities.
+
+The first four quantitative checks are not observed: real beats identity and shuffled with positive subject-level CIs, both paired deltas are positive on 10/10 seeds, the subject-level effect survives removing the strongest cases, and the ordering persists across three capacities. The node-level mechanism check remains unresolved and I report it as such.
+
+## Conclusion
+
+My conclusion is that **graph structure genuinely contributes to node localisation in this dataset**, with the strongest evidence coming from the matched real-vs-shuffled and real-vs-identity controls, repeated paired seeds, and subject-level bootstrap uncertainty. The additional weight-shuffle result narrows the claim: most of the benefit appears to come from the **correct topology**, while exact edge weights make a much smaller contribution. I do not claim causality, transfer to another parcellation, or a proven homophily mechanism.

@@ -1,0 +1,10 @@
+{
+  "within_left": 3.308258024252955,
+  "within_right": 3.249549170012597,
+  "across_hemisphere": 1.01206969718077,
+  "homotopic": 4.980853996106556,
+  "heterotopic": 0.8918035063042309,
+  "homotopic_p": 2.217285667751326e-78,
+  "null_within_across_ratio_mean": 1.005783981191124,
+  "ordering_evidence": true
+}

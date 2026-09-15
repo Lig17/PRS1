@@ -5,13 +5,17 @@ Graph real vs shuffled,auprc,0.0833,0.0301,0.141,0.999
 Graph real vs shuffled,topk_dice,0.1366,0.0637,0.2176,1.0
 Graph real vs weight-shuffle,auprc,0.0111,-0.0149,0.0282,0.784
 Graph real vs weight-shuffle,topk_dice,0.0777,0.0321,0.1233,1.0
-Graph real vs non-graph baseline,auprc,0.0906,0.0436,0.1321,1.0
-Graph real vs non-graph baseline,topk_dice,0.1227,0.0613,0.181,1.0
+Graph real vs non-graph HGB,auprc,0.0906,0.0436,0.1321,1.0
+Graph real vs non-graph HGB,topk_dice,0.1227,0.0613,0.181,1.0
+Graph real vs non-graph logreg,auprc,0.0561,-0.003,0.1159,0.972
+Graph real vs non-graph logreg,topk_dice,0.1086,0.0432,0.1739,0.999
 A+B vs A-only (graph),auprc,0.0663,0.021,0.1247,0.998
 A+B vs A-only (graph),topk_dice,0.1116,0.0256,0.2092,0.994
-Final fusion vs model alone,auprc,0.1397,0.0579,0.2267,1.0
-Final fusion vs model alone,topk_dice,0.0687,-0.0013,0.1433,0.972
-Final fusion vs simulation alone,auprc,0.3186,0.2108,0.4145,1.0
-Final fusion vs simulation alone,topk_dice,0.1975,0.1098,0.2863,1.0
-Final fusion vs naive average,auprc,0.1298,0.0839,0.1858,1.0
-Final fusion vs naive average,topk_dice,0.1463,0.0828,0.2117,1.0
+Final fusion vs model alone,auprc,0.1379,0.0564,0.2242,1.0
+Final fusion vs model alone,topk_dice,0.0738,0.003,0.1464,0.98
+Final fusion vs simulation alone,auprc,0.3168,0.2084,0.4135,1.0
+Final fusion vs simulation alone,topk_dice,0.2026,0.1127,0.2963,1.0
+Final fusion vs naive average (rank),auprc,0.128,0.0826,0.1843,1.0
+Final fusion vs naive average (rank),topk_dice,0.1514,0.0884,0.2154,1.0
+Final fusion vs naive average (raw),auprc,0.008,-0.0327,0.0576,0.636
+Final fusion vs naive average (raw),topk_dice,-0.0108,-0.0736,0.0509,0.359

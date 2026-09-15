@@ -1,0 +1,13 @@
+variant,family,n_feat,auprc,auroc,topk_dice
+baseline (as frozen),hgb,39,0.5085,0.8538,0.4549
+baseline (as frozen),logreg,39,0.4989,0.8589,0.4767
++node_onehot (68 cols),hgb,107,0.498,0.8555,0.471
++node_onehot (68 cols),logreg,107,0.4266,0.8379,0.3853
++node_prior_ipsilateral,hgb,40,0.4178,0.7992,0.4389
++node_prior_ipsilateral,logreg,40,0.4403,0.8287,0.4097
++both node forms,hgb,108,0.4197,0.799,0.4389
++both node forms,logreg,108,0.4268,0.825,0.4234
+NO CLINICAL PRIOR (-ipsi),hgb,38,0.4515,0.8306,0.4436
+NO CLINICAL PRIOR (-ipsi),logreg,38,0.4742,0.8398,0.4588
+NO CLINICAL PRIOR +node_ipsi,hgb,39,0.4189,0.8016,0.4389
+NO CLINICAL PRIOR +node_ipsi,logreg,39,0.4383,0.8267,0.4246

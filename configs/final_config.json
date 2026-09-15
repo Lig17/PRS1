@@ -70,7 +70,7 @@
       0.4,
       0.8
     ],
-    "stacker_C": 1.0
+    "stacker_C": 100.0
   },
   "primary_nongraph_baseline": "hgb",
   "metrics": [
