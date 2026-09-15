@@ -1,7 +1,7 @@
 # PRS1 — IIIT-Delhi Take-Home Assignment
 
 **Candidate:** Lighittha P R  
-**Email:** ligpersonal@gmail.com
+**Email:** ligpersonalmail@gmail.com
 
 
 This repository contains my complete solution for **Position 2 — Simulation-Informed AI & Multimodal Epileptogenic-Zone Localisation**. In the application Google Form, I can separately select my preferred project position; this repository answers the take-home brief itself.
